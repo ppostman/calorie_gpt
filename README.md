@@ -21,6 +21,27 @@ A RESTful API service for tracking daily calorie and nutrition intake, designed 
 - `PUT /entries/:id` - Update an entry
 - `DELETE /entries/:id` - Delete an entry
 
+## Authentication
+
+All API endpoints are protected with API key authentication. You need to include your API key in the `X-API-Key` header with every request.
+
+Example:
+```bash
+curl -X GET http://localhost:8080/entries \
+  -H "X-API-Key: your-api-key"
+```
+
+To set up authentication:
+
+1. Add your API key to the `.env` file:
+```
+API_KEY=your-secure-api-key
+```
+
+2. Include the API key in all requests using the `X-API-Key` header.
+
+⚠️ Keep your API key secure and never commit it to version control.
+
 ## Setup
 
 1. Install Go (1.21 or later)
@@ -34,6 +55,7 @@ A RESTful API service for tracking daily calorie and nutrition intake, designed 
    DB_PASSWORD=your_password
    DB_NAME=calorie_gpt
    DB_PORT=5432
+   API_KEY=your-secure-api-key
    ```
    For production, you can just set the `DATABASE_URL`:
    ```env
@@ -61,6 +83,7 @@ Create a new entry:
 ```bash
 curl -X POST http://localhost:8080/entries \
 -H "Content-Type: application/json" \
+-H "X-API-Key: your-api-key" \
 -d '{
     "date": "2025-02-16",
     "base_calorie_limit": 2000,

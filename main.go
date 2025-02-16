@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"errors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -307,53 +308,79 @@ func initDB() {
 	db.AutoMigrate(&NutritionEntry{}, &DailyCalorieLimit{}, &Weight{})
 }
 
+func authMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		apiKey := c.GetHeader("X-API-Key")
+		expectedAPIKey := os.Getenv("API_KEY")
+
+		if apiKey == "" {
+			c.JSON(401, gin.H{"error": "API key is required"})
+			c.Abort()
+			return
+		}
+
+		if apiKey != expectedAPIKey {
+			c.JSON(401, gin.H{"error": "Invalid API key"})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
 func main() {
 	// Load environment variables
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found")
+		log.Fatal("Error loading .env file")
 	}
 
 	// Initialize database
 	initDB()
 
-	// Setup router
+	// Initialize Gin router
 	r := gin.Default()
 
-	// CORS middleware
+	// Enable CORS
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-API-Key")
+
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
 			return
 		}
-		
+
 		c.Next()
 	})
 
-	// Daily Limit routes
-	r.POST("/daily-limits", createDailyLimit)
-	r.GET("/daily-limits/:date", getDailyLimit)
+	// Apply auth middleware to all routes
+	authorized := r.Group("/")
+	authorized.Use(authMiddleware())
+	{
+		// Daily Limits routes
+		authorized.POST("/daily-limits", createDailyLimit)
+		authorized.GET("/daily-limits/:date", getDailyLimit)
 
-	// Nutrition Entry routes
-	r.POST("/entries", createEntry)
-	r.GET("/entries", getEntries)
-	r.GET("/entries/:id", getEntry)
-	r.GET("/entries/date/:date", getEntriesByDate)
-	r.PUT("/entries/:id", updateEntry)
-	r.DELETE("/entries/:id", deleteEntry)
+		// Nutrition Entry routes
+		authorized.POST("/entries", createEntry)
+		authorized.GET("/entries", getEntries)
+		authorized.GET("/entries/:id", getEntry)
+		authorized.GET("/entries/date/:date", getEntriesByDate)
+		authorized.PUT("/entries/:id", updateEntry)
+		authorized.DELETE("/entries/:id", deleteEntry)
 
-	// Calorie Calculation route
-	r.GET("/calories/:date", getDailyCalories)
+		// Calorie Calculation route
+		authorized.GET("/calories/:date", getDailyCalories)
 
-	// Weight tracking endpoints
-	r.POST("/weights", createWeight)
-	r.GET("/weights/:id", getWeight)
-	r.GET("/weights/date/:date", getWeightsByDate)
-	r.PUT("/weights/:id", updateWeight)
-	r.DELETE("/weights/:id", deleteWeight)
+		// Weight tracking endpoints
+		authorized.POST("/weights", createWeight)
+		authorized.GET("/weights/:id", getWeight)
+		authorized.GET("/weights/date/:date", getWeightsByDate)
+		authorized.PUT("/weights/:id", updateWeight)
+		authorized.DELETE("/weights/:id", deleteWeight)
+	}
 
 	// Run server
 	port := os.Getenv("PORT")

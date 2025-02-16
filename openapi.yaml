@@ -1,7 +1,16 @@
 openapi: 3.1.0
 info:
   title: Calorie GPT API
-  description: API for tracking daily calorie and nutrition intake with GPT integration
+  description: |
+    API for tracking daily calorie intake, nutrition, and weight management.
+    Features include:
+    - Daily calorie limit management
+    - Nutrition entry tracking
+    - Weight tracking and monitoring
+    - Calorie calculations and remaining calorie tracking
+
+    Authentication:
+    All endpoints require an API key to be sent in the X-API-Key header.
   version: 1.0.0
 
 servers:
@@ -10,11 +19,24 @@ servers:
   - url: http://localhost:8080
     description: Local development server
 
+security:
+  - ApiKeyAuth: []
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authentication. Must be included in all requests.
+
 paths:
   /daily-limits:
     post:
       operationId: createDailyLimit
       summary: Create or update a daily calorie limit
+      security:
+        - ApiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -45,6 +67,8 @@ paths:
     get:
       operationId: getDailyLimit
       summary: Get daily calorie limit for a specific date
+      security:
+        - ApiKeyAuth: []
       parameters:
         - name: date
           in: path
@@ -72,6 +96,8 @@ paths:
     post:
       operationId: createEntry
       summary: Create a new nutrition entry
+      security:
+        - ApiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -95,6 +121,8 @@ paths:
     get:
       operationId: getAllEntries
       summary: Get all nutrition entries
+      security:
+        - ApiKeyAuth: []
       responses:
         '200':
           description: List of nutrition entries
@@ -109,6 +137,8 @@ paths:
     get:
       operationId: getEntry
       summary: Get a specific nutrition entry
+      security:
+        - ApiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -133,6 +163,8 @@ paths:
     put:
       operationId: updateEntry
       summary: Update a nutrition entry
+      security:
+        - ApiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -163,6 +195,8 @@ paths:
     delete:
       operationId: deleteEntry
       summary: Delete a nutrition entry
+      security:
+        - ApiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -192,6 +226,8 @@ paths:
     get:
       operationId: getEntriesByDate
       summary: Get entries for a specific date
+      security:
+        - ApiKeyAuth: []
       parameters:
         - name: date
           in: path
@@ -215,6 +251,8 @@ paths:
     get:
       operationId: getDailyCalories
       summary: Get calorie calculations for a specific date
+      security:
+        - ApiKeyAuth: []
       parameters:
         - name: date
           in: path
@@ -242,6 +280,8 @@ paths:
     post:
       operationId: createWeight
       summary: Create a new weight record
+      security:
+        - ApiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -266,6 +306,8 @@ paths:
     get:
       operationId: getWeight
       summary: Get a specific weight record
+      security:
+        - ApiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -290,6 +332,8 @@ paths:
     put:
       operationId: updateWeight
       summary: Update a weight record
+      security:
+        - ApiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -320,6 +364,8 @@ paths:
     delete:
       operationId: deleteWeight
       summary: Delete a weight record
+      security:
+        - ApiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -349,6 +395,8 @@ paths:
     get:
       operationId: getWeightsByDate
       summary: Get weight records for a specific date
+      security:
+        - ApiKeyAuth: []
       parameters:
         - name: date
           in: path
