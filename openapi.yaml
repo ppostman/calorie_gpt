@@ -30,6 +30,174 @@ components:
       name: X-API-Key
       description: API key for authentication. Must be included in all requests.
 
+  schemas:
+    DailyCalorieLimitInput:
+      type: object
+      required:
+        - date
+        - base_calories
+      properties:
+        date:
+          type: string
+          format: date
+          example: "2025-02-16"
+        base_calories:
+          type: number
+          format: float
+          description: Daily base calorie limit
+          example: 2000
+        workout_calories:
+          type: number
+          format: float
+          description: Additional calories from workouts
+          example: 300
+
+    DailyCalorieLimit:
+      allOf:
+        - $ref: '#/components/schemas/DailyCalorieLimitInput'
+        - type: object
+          properties:
+            id:
+              type: integer
+              example: 1
+            created_at:
+              type: string
+              format: date-time
+              example: "2025-02-16T10:30:00Z"
+            updated_at:
+              type: string
+              format: date-time
+              example: "2025-02-16T10:30:00Z"
+
+    NutritionEntryInput:
+      type: object
+      required:
+        - date
+        - food
+        - calories
+      properties:
+        date:
+          type: string
+          format: date
+          example: "2025-02-16"
+        food:
+          type: string
+          description: Name of the food item
+          example: "Chicken Salad"
+        calories:
+          type: number
+          format: float
+          description: Calories in the food item
+          example: 350
+        protein:
+          type: number
+          format: float
+          description: Protein content in grams
+          example: 25
+        carbs:
+          type: number
+          format: float
+          description: Carbohydrate content in grams
+          example: 15
+        fat:
+          type: number
+          format: float
+          description: Fat content in grams
+          example: 20
+        description:
+          type: string
+          description: Additional details about the food item
+          example: "Grilled chicken breast with mixed greens"
+
+    NutritionEntry:
+      allOf:
+        - $ref: '#/components/schemas/NutritionEntryInput'
+        - type: object
+          properties:
+            id:
+              type: integer
+              example: 1
+            created_at:
+              type: string
+              format: date-time
+              example: "2025-02-16T10:30:00Z"
+            updated_at:
+              type: string
+              format: date-time
+              example: "2025-02-16T10:30:00Z"
+
+    CalorieCalculation:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+          example: "2025-02-16"
+        base_calories:
+          type: number
+          format: float
+          example: 2000
+        workout_calories:
+          type: number
+          format: float
+          example: 300
+        consumed_calories:
+          type: number
+          format: float
+          example: 1200
+        remaining_calories:
+          type: number
+          format: float
+          example: 1100
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/NutritionEntry'
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "Entry not found"
+
+    WeightInput:
+      type: object
+      required:
+        - date
+        - weight
+      properties:
+        date:
+          type: string
+          format: date
+          example: "2025-02-16"
+        weight:
+          type: number
+          format: float
+          description: Weight in kilograms
+          example: 75.5
+        notes:
+          type: string
+          description: Additional notes about the weight record
+          example: "After morning workout"
+
+    Weight:
+      allOf:
+        - $ref: '#/components/schemas/WeightInput'
+        - type: object
+          properties:
+            id:
+              type: integer
+              example: 1
+            created_at:
+              type: string
+              format: date-time
+              example: "2025-02-16T10:30:00Z"
+            updated_at:
+              type: string
+              format: date-time
+              example: "2025-02-16T10:30:00Z"
+
 paths:
   /daily-limits:
     post:
@@ -415,172 +583,3 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Weight'
-
-components:
-  schemas:
-    DailyCalorieLimitInput:
-      type: object
-      required:
-        - date
-        - base_calories
-      properties:
-        date:
-          type: string
-          format: date
-          example: "2025-02-16"
-        base_calories:
-          type: number
-          format: float
-          description: Daily base calorie limit
-          example: 2000
-        workout_calories:
-          type: number
-          format: float
-          description: Additional calories from workouts
-          example: 300
-
-    DailyCalorieLimit:
-      allOf:
-        - $ref: '#/components/schemas/DailyCalorieLimitInput'
-        - type: object
-          properties:
-            id:
-              type: integer
-              example: 1
-            created_at:
-              type: string
-              format: date-time
-              example: "2025-02-16T10:30:00Z"
-            updated_at:
-              type: string
-              format: date-time
-              example: "2025-02-16T10:30:00Z"
-
-    NutritionEntryInput:
-      type: object
-      required:
-        - date
-        - food
-        - calories
-      properties:
-        date:
-          type: string
-          format: date
-          example: "2025-02-16"
-        food:
-          type: string
-          description: Name of the food item
-          example: "Chicken Salad"
-        calories:
-          type: number
-          format: float
-          description: Calories in the food item
-          example: 350
-        protein:
-          type: number
-          format: float
-          description: Protein content in grams
-          example: 25
-        carbs:
-          type: number
-          format: float
-          description: Carbohydrate content in grams
-          example: 15
-        fat:
-          type: number
-          format: float
-          description: Fat content in grams
-          example: 20
-        description:
-          type: string
-          description: Additional details about the food item
-          example: "Grilled chicken breast with mixed greens"
-
-    NutritionEntry:
-      allOf:
-        - $ref: '#/components/schemas/NutritionEntryInput'
-        - type: object
-          properties:
-            id:
-              type: integer
-              example: 1
-            created_at:
-              type: string
-              format: date-time
-              example: "2025-02-16T10:30:00Z"
-            updated_at:
-              type: string
-              format: date-time
-              example: "2025-02-16T10:30:00Z"
-
-    CalorieCalculation:
-      type: object
-      properties:
-        date:
-          type: string
-          format: date
-          example: "2025-02-16"
-        base_calories:
-          type: number
-          format: float
-          example: 2000
-        workout_calories:
-          type: number
-          format: float
-          example: 300
-        consumed_calories:
-          type: number
-          format: float
-          example: 1200
-        remaining_calories:
-          type: number
-          format: float
-          example: 1100
-        entries:
-          type: array
-          items:
-            $ref: '#/components/schemas/NutritionEntry'
-
-    Error:
-      type: object
-      properties:
-        error:
-          type: string
-          example: "Entry not found"
-
-    WeightInput:
-      type: object
-      required:
-        - date
-        - weight
-      properties:
-        date:
-          type: string
-          format: date
-          example: "2025-02-16"
-        weight:
-          type: number
-          format: float
-          description: Weight in kilograms
-          example: 75.5
-        notes:
-          type: string
-          description: Additional notes about the weight record
-          example: "After morning workout"
-
-    Weight:
-      allOf:
-        - $ref: '#/components/schemas/WeightInput'
-        - type: object
-          properties:
-            id:
-              type: integer
-              example: 1
-            created_at:
-              type: string
-              format: date-time
-              example: "2025-02-16T10:30:00Z"
-            updated_at:
-              type: string
-              format: date-time
-              example: "2025-02-16T10:30:00Z"
