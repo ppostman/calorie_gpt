@@ -10,7 +10,7 @@ A RESTful API service for tracking daily calorie and nutrition intake, designed 
 - Store calories, protein, carbs, and fat for each entry
 - Query entries by date
 - Full CRUD operations for nutrition entries
-- SQLite database for simple deployment
+- PostgreSQL database for scalable deployment
 
 ## API Endpoints
 
@@ -24,12 +24,30 @@ A RESTful API service for tracking daily calorie and nutrition intake, designed 
 ## Setup
 
 1. Install Go (1.21 or later)
-2. Clone this repository
-3. Install dependencies:
+2. Install PostgreSQL
+3. Clone this repository
+4. Set up your environment variables in `.env`:
+   ```env
+   PORT=8080
+   DB_HOST=localhost
+   DB_USER=your_username
+   DB_PASSWORD=your_password
+   DB_NAME=calorie_gpt
+   DB_PORT=5432
+   ```
+   For production, you can just set the `DATABASE_URL`:
+   ```env
+   DATABASE_URL=postgresql://user:password@host:port/dbname
+   ```
+5. Install dependencies:
    ```bash
    go mod download
    ```
-4. Run the server:
+6. Create the PostgreSQL database:
+   ```bash
+   createdb calorie_gpt
+   ```
+7. Run the server:
    ```bash
    go run main.go
    ```
@@ -60,4 +78,4 @@ The API will automatically calculate the `calories_remaining` field (in this cas
 
 ## Database
 
-The API uses SQLite as the database, storing data in `nutrition.db`. The database will be created automatically when you first run the application.
+The API uses PostgreSQL as the database. The database schema will be automatically created when you first run the application using GORM's auto-migration feature.
