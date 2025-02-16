@@ -7,17 +7,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
-
-// @title Calorie GPT API
-// @version 1.0
-// @description API for tracking daily calorie and nutrition intake with GPT integration
-// @host localhost:8080
-// @BasePath /
 
 type NutritionEntry struct {
 	gorm.Model
@@ -35,14 +27,6 @@ type NutritionEntry struct {
 
 var db *gorm.DB
 
-// @Summary Create a new nutrition entry
-// @Description Create a new nutrition entry with calorie tracking
-// @Accept json
-// @Produce json
-// @Param entry body NutritionEntry true "Nutrition Entry"
-// @Success 201 {object} NutritionEntry
-// @Failure 400 {object} map[string]string
-// @Router /entries [post]
 func createEntry(c *gin.Context) {
 	var entry NutritionEntry
 	if err := c.ShouldBindJSON(&entry); err != nil {
@@ -58,24 +42,12 @@ func createEntry(c *gin.Context) {
 	c.JSON(201, entry)
 }
 
-// @Summary Get all nutrition entries
-// @Description Get a list of all nutrition entries
-// @Produce json
-// @Success 200 {array} NutritionEntry
-// @Router /entries [get]
 func getEntries(c *gin.Context) {
 	var entries []NutritionEntry
 	db.Find(&entries)
 	c.JSON(200, entries)
 }
 
-// @Summary Get a specific nutrition entry
-// @Description Get a nutrition entry by its ID
-// @Produce json
-// @Param id path int true "Entry ID"
-// @Success 200 {object} NutritionEntry
-// @Failure 404 {object} map[string]string
-// @Router /entries/{id} [get]
 func getEntry(c *gin.Context) {
 	id := c.Param("id")
 	var entry NutritionEntry
@@ -88,12 +60,6 @@ func getEntry(c *gin.Context) {
 	c.JSON(200, entry)
 }
 
-// @Summary Get entries by date
-// @Description Get all nutrition entries for a specific date
-// @Produce json
-// @Param date path string true "Date (YYYY-MM-DD)"
-// @Success 200 {array} NutritionEntry
-// @Router /entries/date/{date} [get]
 func getEntriesByDate(c *gin.Context) {
 	date := c.Param("date")
 	var entries []NutritionEntry
@@ -102,15 +68,6 @@ func getEntriesByDate(c *gin.Context) {
 	c.JSON(200, entries)
 }
 
-// @Summary Update a nutrition entry
-// @Description Update an existing nutrition entry
-// @Accept json
-// @Produce json
-// @Param id path int true "Entry ID"
-// @Param entry body NutritionEntry true "Updated Nutrition Entry"
-// @Success 200 {object} NutritionEntry
-// @Failure 404 {object} map[string]string
-// @Router /entries/{id} [put]
 func updateEntry(c *gin.Context) {
 	id := c.Param("id")
 	var entry NutritionEntry
@@ -129,13 +86,6 @@ func updateEntry(c *gin.Context) {
 	c.JSON(200, entry)
 }
 
-// @Summary Delete a nutrition entry
-// @Description Delete a nutrition entry by its ID
-// @Produce json
-// @Param id path int true "Entry ID"
-// @Success 200 {object} map[string]string
-// @Failure 404 {object} map[string]string
-// @Router /entries/{id} [delete]
 func deleteEntry(c *gin.Context) {
 	id := c.Param("id")
 	var entry NutritionEntry
@@ -188,6 +138,20 @@ func main() {
 	// Setup router
 	r := gin.Default()
 
+	// CORS middleware
+	r.Use(func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+		
+		c.Next()
+	})
+
 	// Routes
 	r.POST("/entries", createEntry)
 	r.GET("/entries", getEntries)
@@ -195,9 +159,6 @@ func main() {
 	r.GET("/entries/date/:date", getEntriesByDate)
 	r.PUT("/entries/:id", updateEntry)
 	r.DELETE("/entries/:id", deleteEntry)
-
-	// Swagger documentation endpoint
-	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Run server
 	port := os.Getenv("PORT")
