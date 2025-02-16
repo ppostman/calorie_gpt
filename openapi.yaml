@@ -1,4 +1,4 @@
-openapi: 3.0.0
+openapi: 3.1.0
 info:
   title: Calorie GPT API
   description: API for tracking daily calorie and nutrition intake with GPT integration
@@ -11,8 +11,66 @@ servers:
     description: Local development server
 
 paths:
+  /daily-limits:
+    post:
+      operationId: createDailyLimit
+      summary: Create or update a daily calorie limit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DailyCalorieLimitInput'
+      responses:
+        '201':
+          description: Daily limit created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyCalorieLimit'
+        '200':
+          description: Daily limit updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyCalorieLimit'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /daily-limits/{date}:
+    get:
+      operationId: getDailyLimit
+      summary: Get daily calorie limit for a specific date
+      parameters:
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date
+          description: Date in YYYY-MM-DD format
+          example: "2025-02-16"
+      responses:
+        '200':
+          description: Daily limit found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyCalorieLimit'
+        '404':
+          description: Daily limit not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /entries:
     post:
+      operationId: createEntry
       summary: Create a new nutrition entry
       requestBody:
         required: true
@@ -35,6 +93,7 @@ paths:
                 $ref: '#/components/schemas/Error'
     
     get:
+      operationId: getAllEntries
       summary: Get all nutrition entries
       responses:
         '200':
@@ -47,16 +106,16 @@ paths:
                   $ref: '#/components/schemas/NutritionEntry'
 
   /entries/{id}:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: integer
-        description: Entry ID
-    
     get:
+      operationId: getEntry
       summary: Get a specific nutrition entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Entry ID
       responses:
         '200':
           description: Nutrition entry found
@@ -72,7 +131,15 @@ paths:
                 $ref: '#/components/schemas/Error'
     
     put:
+      operationId: updateEntry
       summary: Update a nutrition entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Entry ID
       requestBody:
         required: true
         content:
@@ -94,7 +161,15 @@ paths:
                 $ref: '#/components/schemas/Error'
     
     delete:
+      operationId: deleteEntry
       summary: Delete a nutrition entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Entry ID
       responses:
         '200':
           description: Entry deleted successfully
@@ -114,18 +189,18 @@ paths:
                 $ref: '#/components/schemas/Error'
 
   /entries/date/{date}:
-    parameters:
-      - name: date
-        in: path
-        required: true
-        schema:
-          type: string
-          format: date
-        description: Date in YYYY-MM-DD format
-        example: "2025-02-16"
-    
     get:
+      operationId: getEntriesByDate
       summary: Get entries for a specific date
+      parameters:
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date
+          description: Date in YYYY-MM-DD format
+          example: "2025-02-16"
       responses:
         '200':
           description: List of nutrition entries for the date
@@ -136,21 +211,176 @@ paths:
                 items:
                   $ref: '#/components/schemas/NutritionEntry'
 
+  /calories/{date}:
+    get:
+      operationId: getDailyCalories
+      summary: Get calorie calculations for a specific date
+      parameters:
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date
+          description: Date in YYYY-MM-DD format
+          example: "2025-02-16"
+      responses:
+        '200':
+          description: Calorie calculations including remaining calories
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalorieCalculation'
+        '404':
+          description: Daily limit not found for the date
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /weights:
+    post:
+      operationId: createWeight
+      summary: Create a new weight record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WeightInput'
+      responses:
+        '201':
+          description: Weight record created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Weight'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /weights/{id}:
+    get:
+      operationId: getWeight
+      summary: Get a specific weight record
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Weight record ID
+      responses:
+        '200':
+          description: Weight record found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Weight'
+        '404':
+          description: Weight record not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    
+    put:
+      operationId: updateWeight
+      summary: Update a weight record
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Weight record ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WeightInput'
+      responses:
+        '200':
+          description: Weight record updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Weight'
+        '404':
+          description: Weight record not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    
+    delete:
+      operationId: deleteWeight
+      summary: Delete a weight record
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Weight record ID
+      responses:
+        '200':
+          description: Weight record deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Weight record deleted successfully
+        '404':
+          description: Weight record not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /weights/date/{date}:
+    get:
+      operationId: getWeightsByDate
+      summary: Get weight records for a specific date
+      parameters:
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date
+          description: Date in YYYY-MM-DD format
+          example: "2025-02-16"
+      responses:
+        '200':
+          description: List of weight records for the date
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Weight'
+
 components:
   schemas:
-    NutritionEntryInput:
+    DailyCalorieLimitInput:
       type: object
       required:
         - date
-        - base_calorie_limit
-        - food
-        - calories
+        - base_calories
       properties:
         date:
           type: string
           format: date
           example: "2025-02-16"
-        base_calorie_limit:
+        base_calories:
           type: number
           format: float
           description: Daily base calorie limit
@@ -160,6 +390,35 @@ components:
           format: float
           description: Additional calories from workouts
           example: 300
+
+    DailyCalorieLimit:
+      allOf:
+        - $ref: '#/components/schemas/DailyCalorieLimitInput'
+        - type: object
+          properties:
+            id:
+              type: integer
+              example: 1
+            created_at:
+              type: string
+              format: date-time
+              example: "2025-02-16T10:30:00Z"
+            updated_at:
+              type: string
+              format: date-time
+              example: "2025-02-16T10:30:00Z"
+
+    NutritionEntryInput:
+      type: object
+      required:
+        - date
+        - food
+        - calories
+      properties:
+        date:
+          type: string
+          format: date
+          example: "2025-02-16"
         food:
           type: string
           description: Name of the food item
@@ -197,11 +456,6 @@ components:
             id:
               type: integer
               example: 1
-            calories_remaining:
-              type: number
-              format: float
-              description: Automatically calculated remaining calories
-              example: 1950
             created_at:
               type: string
               format: date-time
@@ -211,9 +465,74 @@ components:
               format: date-time
               example: "2025-02-16T10:30:00Z"
 
+    CalorieCalculation:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+          example: "2025-02-16"
+        base_calories:
+          type: number
+          format: float
+          example: 2000
+        workout_calories:
+          type: number
+          format: float
+          example: 300
+        consumed_calories:
+          type: number
+          format: float
+          example: 1200
+        remaining_calories:
+          type: number
+          format: float
+          example: 1100
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/NutritionEntry'
+
     Error:
       type: object
       properties:
         error:
           type: string
           example: "Entry not found"
+
+    WeightInput:
+      type: object
+      required:
+        - date
+        - weight
+      properties:
+        date:
+          type: string
+          format: date
+          example: "2025-02-16"
+        weight:
+          type: number
+          format: float
+          description: Weight in kilograms
+          example: 75.5
+        notes:
+          type: string
+          description: Additional notes about the weight record
+          example: "After morning workout"
+
+    Weight:
+      allOf:
+        - $ref: '#/components/schemas/WeightInput'
+        - type: object
+          properties:
+            id:
+              type: integer
+              example: 1
+            created_at:
+              type: string
+              format: date-time
+              example: "2025-02-16T10:30:00Z"
+            updated_at:
+              type: string
+              format: date-time
+              example: "2025-02-16T10:30:00Z"

@@ -11,21 +11,76 @@ import (
 	"gorm.io/gorm"
 )
 
+type DailyCalorieLimit struct {
+	gorm.Model
+	Date            string  `json:"date"`
+	BaseCalories    float64 `json:"base_calories"`
+	WorkoutCalories float64 `json:"workout_calories"`
+}
+
 type NutritionEntry struct {
 	gorm.Model
-	Date              string  `json:"date"`
-	BaseCalorieLimit  float64 `json:"base_calorie_limit"`
+	Date        string  `json:"date"`
+	Food        string  `json:"food"`
+	Calories    float64 `json:"calories"`
+	Protein     float64 `json:"protein"`
+	Carbs       float64 `json:"carbs"`
+	Fat         float64 `json:"fat"`
+	Description string  `json:"description"`
+}
+
+type CalorieCalculation struct {
+	Date               string  `json:"date"`
+	BaseCalories      float64 `json:"base_calories"`
 	WorkoutCalories   float64 `json:"workout_calories"`
-	CaloriesRemaining float64 `json:"calories_remaining"`
-	Food              string  `json:"food"`
-	Calories          float64 `json:"calories"`
-	Protein           float64 `json:"protein"`
-	Carbs             float64 `json:"carbs"`
-	Fat               float64 `json:"fat"`
-	Description       string  `json:"description"`
+	ConsumedCalories  float64 `json:"consumed_calories"`
+	RemainingCalories float64 `json:"remaining_calories"`
+	Entries           []NutritionEntry `json:"entries"`
+}
+
+type Weight struct {
+	gorm.Model
+	Date   string  `json:"date" gorm:"not null"`
+	Weight float64 `json:"weight" gorm:"not null"`
+	Notes  string  `json:"notes"`
 }
 
 var db *gorm.DB
+
+func createDailyLimit(c *gin.Context) {
+	var limit DailyCalorieLimit
+	if err := c.ShouldBindJSON(&limit); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check if a limit already exists for this date
+	var existingLimit DailyCalorieLimit
+	if result := db.Where("date = ?", limit.Date).First(&existingLimit); result.Error == nil {
+		// Update existing limit
+		existingLimit.BaseCalories = limit.BaseCalories
+		existingLimit.WorkoutCalories = limit.WorkoutCalories
+		db.Save(&existingLimit)
+		c.JSON(200, existingLimit)
+		return
+	}
+
+	// Create new limit
+	db.Create(&limit)
+	c.JSON(201, limit)
+}
+
+func getDailyLimit(c *gin.Context) {
+	date := c.Param("date")
+	var limit DailyCalorieLimit
+	
+	if err := db.Where("date = ?", date).First(&limit).Error; err != nil {
+		c.JSON(404, gin.H{"error": "Daily limit not found"})
+		return
+	}
+	
+	c.JSON(200, limit)
+}
 
 func createEntry(c *gin.Context) {
 	var entry NutritionEntry
@@ -33,10 +88,6 @@ func createEntry(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-
-	// Calculate calories remaining
-	totalAvailableCalories := entry.BaseCalorieLimit + entry.WorkoutCalories
-	entry.CaloriesRemaining = totalAvailableCalories - entry.Calories
 
 	db.Create(&entry)
 	c.JSON(201, entry)
@@ -66,6 +117,41 @@ func getEntriesByDate(c *gin.Context) {
 	
 	db.Where("date = ?", date).Find(&entries)
 	c.JSON(200, entries)
+}
+
+func getDailyCalories(c *gin.Context) {
+	date := c.Param("date")
+	
+	// Get daily limit
+	var limit DailyCalorieLimit
+	if err := db.Where("date = ?", date).First(&limit).Error; err != nil {
+		c.JSON(404, gin.H{"error": "Daily limit not found for this date"})
+		return
+	}
+	
+	// Get all entries for the date
+	var entries []NutritionEntry
+	db.Where("date = ?", date).Find(&entries)
+	
+	// Calculate total consumed calories
+	var consumedCalories float64
+	for _, entry := range entries {
+		consumedCalories += entry.Calories
+	}
+	
+	// Calculate remaining calories
+	remainingCalories := limit.BaseCalories + limit.WorkoutCalories - consumedCalories
+	
+	calculation := CalorieCalculation{
+		Date:              date,
+		BaseCalories:      limit.BaseCalories,
+		WorkoutCalories:   limit.WorkoutCalories,
+		ConsumedCalories:  consumedCalories,
+		RemainingCalories: remainingCalories,
+		Entries:           entries,
+	}
+	
+	c.JSON(200, calculation)
 }
 
 func updateEntry(c *gin.Context) {
@@ -99,6 +185,101 @@ func deleteEntry(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "Entry deleted successfully"})
 }
 
+func createWeight(c *gin.Context) {
+	var weight Weight
+	if err := c.ShouldBindJSON(&weight); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := db.Create(&weight).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(201, weight)
+}
+
+func getWeight(c *gin.Context) {
+	id := c.Param("id")
+	var weight Weight
+
+	if err := db.First(&weight, id).Error; err != nil {
+		if err.Error() == "record not found" {
+			c.JSON(404, gin.H{"error": "Weight record not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, weight)
+}
+
+func getWeightsByDate(c *gin.Context) {
+	date := c.Param("date")
+	var weights []Weight
+
+	if err := db.Where("date = ?", date).Find(&weights).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, weights)
+}
+
+func updateWeight(c *gin.Context) {
+	id := c.Param("id")
+	var weight Weight
+
+	if err := db.First(&weight, id).Error; err != nil {
+		if err.Error() == "record not found" {
+			c.JSON(404, gin.H{"error": "Weight record not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	var updatedWeight Weight
+	if err := c.ShouldBindJSON(&updatedWeight); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	weight.Date = updatedWeight.Date
+	weight.Weight = updatedWeight.Weight
+	weight.Notes = updatedWeight.Notes
+
+	if err := db.Save(&weight).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, weight)
+}
+
+func deleteWeight(c *gin.Context) {
+	id := c.Param("id")
+	var weight Weight
+
+	if err := db.First(&weight, id).Error; err != nil {
+		if err.Error() == "record not found" {
+			c.JSON(404, gin.H{"error": "Weight record not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := db.Delete(&weight).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "Weight record deleted successfully"})
+}
+
 func initDB() {
 	var err error
 
@@ -123,7 +304,7 @@ func initDB() {
 	}
 
 	// Migrate the schema
-	db.AutoMigrate(&NutritionEntry{})
+	db.AutoMigrate(&NutritionEntry{}, &DailyCalorieLimit{}, &Weight{})
 }
 
 func main() {
@@ -152,13 +333,27 @@ func main() {
 		c.Next()
 	})
 
-	// Routes
+	// Daily Limit routes
+	r.POST("/daily-limits", createDailyLimit)
+	r.GET("/daily-limits/:date", getDailyLimit)
+
+	// Nutrition Entry routes
 	r.POST("/entries", createEntry)
 	r.GET("/entries", getEntries)
 	r.GET("/entries/:id", getEntry)
 	r.GET("/entries/date/:date", getEntriesByDate)
 	r.PUT("/entries/:id", updateEntry)
 	r.DELETE("/entries/:id", deleteEntry)
+
+	// Calorie Calculation route
+	r.GET("/calories/:date", getDailyCalories)
+
+	// Weight tracking endpoints
+	r.POST("/weights", createWeight)
+	r.GET("/weights/:id", getWeight)
+	r.GET("/weights/date/:date", getWeightsByDate)
+	r.PUT("/weights/:id", updateWeight)
+	r.DELETE("/weights/:id", deleteWeight)
 
 	// Run server
 	port := os.Getenv("PORT")
