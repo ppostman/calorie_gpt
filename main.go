@@ -105,7 +105,11 @@ func getEntry(c *gin.Context) {
 	var entry NutritionEntry
 	
 	if err := db.First(&entry, id).Error; err != nil {
-		c.JSON(404, gin.H{"error": "Entry not found"})
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(404, gin.H{"error": "Entry not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 	
@@ -160,7 +164,11 @@ func updateEntry(c *gin.Context) {
 	var entry NutritionEntry
 	
 	if err := db.First(&entry, id).Error; err != nil {
-		c.JSON(404, gin.H{"error": "Entry not found"})
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(404, gin.H{"error": "Entry not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 	
@@ -178,7 +186,11 @@ func deleteEntry(c *gin.Context) {
 	var entry NutritionEntry
 	
 	if err := db.First(&entry, id).Error; err != nil {
-		c.JSON(404, gin.H{"error": "Entry not found"})
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(404, gin.H{"error": "Entry not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 	
@@ -206,7 +218,7 @@ func getWeight(c *gin.Context) {
 	var weight Weight
 
 	if err := db.First(&weight, id).Error; err != nil {
-		if err.Error() == "record not found" {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(404, gin.H{"error": "Weight record not found"})
 			return
 		}
@@ -234,7 +246,7 @@ func updateWeight(c *gin.Context) {
 	var weight Weight
 
 	if err := db.First(&weight, id).Error; err != nil {
-		if err.Error() == "record not found" {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(404, gin.H{"error": "Weight record not found"})
 			return
 		}
@@ -265,7 +277,7 @@ func deleteWeight(c *gin.Context) {
 	var weight Weight
 
 	if err := db.First(&weight, id).Error; err != nil {
-		if err.Error() == "record not found" {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(404, gin.H{"error": "Weight record not found"})
 			return
 		}
