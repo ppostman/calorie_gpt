@@ -1,20 +1,29 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
-	"errors"
+	"strings"
+	"time"
+	"crypto/rsa"
+	"encoding/base64"
+	"math/big"
+	"sync"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"github.com/gin-contrib/cors"
+	"github.com/golang-jwt/jwt"
 )
 
 type DailyCalorieLimit struct {
 	gorm.Model      `json:"-"`
+	UserID          string  `json:"user_id" gorm:"not null"`
 	Date            string  `json:"date"`
 	BaseCalories    float64 `json:"base_calories"`
 	WorkoutCalories float64 `json:"workout_calories"`
@@ -22,6 +31,7 @@ type DailyCalorieLimit struct {
 
 type NutritionEntry struct {
 	gorm.Model   `json:"-"`
+	UserID      string  `json:"user_id" gorm:"not null"`
 	Date        string  `json:"date"`
 	Food        string  `json:"food"`
 	Calories    float64 `json:"calories"`
@@ -42,6 +52,7 @@ type CalorieCalculation struct {
 
 type Weight struct {
 	gorm.Model `json:"-"`
+	UserID string  `json:"user_id" gorm:"not null"`
 	Date   string  `json:"date" gorm:"not null"`
 	Weight float64 `json:"weight" gorm:"not null"`
 	Notes  string  `json:"notes"`
@@ -56,9 +67,12 @@ func createDailyLimit(c *gin.Context) {
 		return
 	}
 
-	// Check if a limit already exists for this date
+	userID, _ := c.Get("userID")
+	limit.UserID = userID.(string)
+
+	// Check if a limit already exists for this date and user
 	var existingLimit DailyCalorieLimit
-	if result := db.Where("date = ?", limit.Date).First(&existingLimit); result.Error == nil {
+	if result := db.Where("user_id = ? AND date = ?", limit.UserID, limit.Date).First(&existingLimit); result.Error == nil {
 		// Update existing limit
 		existingLimit.BaseCalories = limit.BaseCalories
 		existingLimit.WorkoutCalories = limit.WorkoutCalories
@@ -74,11 +88,13 @@ func createDailyLimit(c *gin.Context) {
 
 func getDailyLimit(c *gin.Context) {
 	date := c.Param("date")
+	userID, _ := c.Get("userID")
 	var limit DailyCalorieLimit
 	
-	if err := db.Where("date = ?", date).First(&limit).Error; err != nil {
+	if err := db.Where("user_id = ? AND date = ?", userID, date).First(&limit).Error; err != nil {
 		// Return a default limit if none exists
 		limit = DailyCalorieLimit{
+			UserID:          userID.(string),
 			Date:            date,
 			BaseCalories:    2000, // Default daily calorie limit
 			WorkoutCalories: 0,
@@ -95,13 +111,17 @@ func createEntry(c *gin.Context) {
 		return
 	}
 
+	userID, _ := c.Get("userID")
+	entry.UserID = userID.(string)
+
 	db.Create(&entry)
 	c.JSON(201, entry)
 }
 
 func getEntries(c *gin.Context) {
+	userID, _ := c.Get("userID")
 	var entries []NutritionEntry
-	if err := db.Find(&entries).Error; err != nil {
+	if err := db.Where("user_id = ?", userID).Find(&entries).Error; err != nil {
 		entries = []NutritionEntry{} // Return empty array if error
 	}
 	c.JSON(200, entries)
@@ -109,10 +129,11 @@ func getEntries(c *gin.Context) {
 
 func getEntry(c *gin.Context) {
 	id := c.Param("id")
+	userID, _ := c.Get("userID")
 	var entry NutritionEntry
 	
-	if err := db.First(&entry, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := db.Where("user_id = ?", userID).First(&entry, id).Error; err != nil {
+		if err.Error() == "record not found" {
 			c.JSON(404, gin.H{"error": "Entry not found"})
 			return
 		}
@@ -125,25 +146,27 @@ func getEntry(c *gin.Context) {
 
 func getEntriesByDate(c *gin.Context) {
 	date := c.Param("date")
+	userID, _ := c.Get("userID")
 	var entries []NutritionEntry
 	
-	db.Where("date = ?", date).Find(&entries)
+	db.Where("user_id = ? AND date = ?", userID, date).Find(&entries)
 	c.JSON(200, entries)
 }
 
 func getDailyCalories(c *gin.Context) {
 	date := c.Param("date")
+	userID, _ := c.Get("userID")
 	
 	// Get daily limit
 	var limit DailyCalorieLimit
-	if err := db.Where("date = ?", date).First(&limit).Error; err != nil {
+	if err := db.Where("user_id = ? AND date = ?", userID, date).First(&limit).Error; err != nil {
 		c.JSON(404, gin.H{"error": "Daily limit not found for this date"})
 		return
 	}
 	
 	// Get all entries for the date
 	var entries []NutritionEntry
-	db.Where("date = ?", date).Find(&entries)
+	db.Where("user_id = ? AND date = ?", userID, date).Find(&entries)
 	
 	// Calculate total consumed calories
 	var consumedCalories float64
@@ -168,14 +191,21 @@ func getDailyCalories(c *gin.Context) {
 
 func updateEntry(c *gin.Context) {
 	id := c.Param("id")
+	userID, _ := c.Get("userID")
 	var entry NutritionEntry
 	
-	if err := db.First(&entry, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := db.Where("user_id = ?", userID).First(&entry, id).Error; err != nil {
+		if err.Error() == "record not found" {
 			c.JSON(404, gin.H{"error": "Entry not found"})
 			return
 		}
 		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	
+	// Only allow updating the entry if it belongs to the user
+	if entry.UserID != userID.(string) {
+		c.JSON(403, gin.H{"error": "Not authorized to update this entry"})
 		return
 	}
 	
@@ -184,20 +214,28 @@ func updateEntry(c *gin.Context) {
 		return
 	}
 	
+	entry.UserID = userID.(string) // Ensure UserID remains unchanged
 	db.Save(&entry)
 	c.JSON(200, entry)
 }
 
 func deleteEntry(c *gin.Context) {
 	id := c.Param("id")
+	userID, _ := c.Get("userID")
 	var entry NutritionEntry
 	
-	if err := db.First(&entry, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := db.Where("user_id = ?", userID).First(&entry, id).Error; err != nil {
+		if err.Error() == "record not found" {
 			c.JSON(404, gin.H{"error": "Entry not found"})
 			return
 		}
 		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	
+	// Only allow deleting the entry if it belongs to the user
+	if entry.UserID != userID.(string) {
+		c.JSON(403, gin.H{"error": "Not authorized to delete this entry"})
 		return
 	}
 	
@@ -212,6 +250,9 @@ func createWeight(c *gin.Context) {
 		return
 	}
 
+	userID, _ := c.Get("userID")
+	weight.UserID = userID.(string)
+
 	if err := db.Create(&weight).Error; err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -222,10 +263,11 @@ func createWeight(c *gin.Context) {
 
 func getWeight(c *gin.Context) {
 	id := c.Param("id")
+	userID, _ := c.Get("userID")
 	var weight Weight
 
-	if err := db.First(&weight, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := db.Where("user_id = ?", userID).First(&weight, id).Error; err != nil {
+		if err.Error() == "record not found" {
 			c.JSON(404, gin.H{"error": "Weight record not found"})
 			return
 		}
@@ -238,9 +280,10 @@ func getWeight(c *gin.Context) {
 
 func getWeightsByDate(c *gin.Context) {
 	date := c.Param("date")
+	userID, _ := c.Get("userID")
 	var weights []Weight
 
-	if err := db.Where("date = ?", date).Find(&weights).Error; err != nil {
+	if err := db.Where("user_id = ? AND date = ?", userID, date).Find(&weights).Error; err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
@@ -248,16 +291,33 @@ func getWeightsByDate(c *gin.Context) {
 	c.JSON(200, weights)
 }
 
+func getWeights(c *gin.Context) {
+	userID, _ := c.Get("userID")
+	var weights []Weight
+	if err := db.Where("user_id = ?", userID).Find(&weights).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error retrieving weights"})
+		return
+	}
+	c.JSON(http.StatusOK, weights)
+}
+
 func updateWeight(c *gin.Context) {
 	id := c.Param("id")
+	userID, _ := c.Get("userID")
 	var weight Weight
 
-	if err := db.First(&weight, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := db.Where("user_id = ?", userID).First(&weight, id).Error; err != nil {
+		if err.Error() == "record not found" {
 			c.JSON(404, gin.H{"error": "Weight record not found"})
 			return
 		}
 		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Only allow updating the weight if it belongs to the user
+	if weight.UserID != userID.(string) {
+		c.JSON(403, gin.H{"error": "Not authorized to update this weight"})
 		return
 	}
 
@@ -281,14 +341,21 @@ func updateWeight(c *gin.Context) {
 
 func deleteWeight(c *gin.Context) {
 	id := c.Param("id")
+	userID, _ := c.Get("userID")
 	var weight Weight
 
-	if err := db.First(&weight, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := db.Where("user_id = ?", userID).First(&weight, id).Error; err != nil {
+		if err.Error() == "record not found" {
 			c.JSON(404, gin.H{"error": "Weight record not found"})
 			return
 		}
 		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Only allow deleting the weight if it belongs to the user
+	if weight.UserID != userID.(string) {
+		c.JSON(403, gin.H{"error": "Not authorized to delete this weight"})
 		return
 	}
 
@@ -298,6 +365,194 @@ func deleteWeight(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"message": "Weight record deleted successfully"})
+}
+
+type JWTKeys struct {
+	Keys []struct {
+		Kty string `json:"kty"`
+		Kid string `json:"kid"`
+		Use string `json:"use"`
+		N   string `json:"n"`
+		E   string `json:"e"`
+	} `json:"keys"`
+}
+
+var (
+	jwksCache     = make(map[string]*rsa.PublicKey)
+	jwksCacheMu   sync.RWMutex
+	jwksCacheTime time.Time
+)
+
+func getJWKS() (*JWTKeys, error) {
+	resp, err := http.Get("https://dev-lk0vcub54idn0l5c.us.auth0.com/.well-known/jwks.json")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var jwks JWTKeys
+	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
+		return nil, err
+	}
+
+	return &jwks, nil
+}
+
+func getPublicKey(token *jwt.Token) (*rsa.PublicKey, error) {
+	jwksCacheMu.RLock()
+	if publicKey, ok := jwksCache[token.Header["kid"].(string)]; ok {
+		if time.Since(jwksCacheTime) < 24*time.Hour {
+			jwksCacheMu.RUnlock()
+			return publicKey, nil
+		}
+	}
+	jwksCacheMu.RUnlock()
+
+	jwks, err := getJWKS()
+	if err != nil {
+		return nil, err
+	}
+
+	jwksCacheMu.Lock()
+	defer jwksCacheMu.Unlock()
+
+	for _, key := range jwks.Keys {
+		if key.Kid == token.Header["kid"].(string) {
+			// Decode the modulus and exponent
+			nBytes, err := base64.RawURLEncoding.DecodeString(key.N)
+			if err != nil {
+				return nil, err
+			}
+			eBytes, err := base64.RawURLEncoding.DecodeString(key.E)
+			if err != nil {
+				return nil, err
+			}
+
+			// Convert the modulus bytes to a big integer
+			n := new(big.Int)
+			n.SetBytes(nBytes)
+
+			// Convert the exponent bytes to an integer
+			var eInt int
+			for i := 0; i < len(eBytes); i++ {
+				eInt = eInt<<8 + int(eBytes[i])
+			}
+
+			// Create the public key
+			publicKey := &rsa.PublicKey{
+				N: n,
+				E: eInt,
+			}
+
+			// Cache the public key
+			jwksCache[key.Kid] = publicKey
+			jwksCacheTime = time.Now()
+
+			return publicKey, nil
+		}
+	}
+
+	return nil, fmt.Errorf("unable to find appropriate key")
+}
+
+func authMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.JSON(401, gin.H{"error": "Authorization header is required"})
+			c.Abort()
+			return
+		}
+
+		// Extract bearer token
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			c.JSON(401, gin.H{"error": "Invalid authorization header format"})
+			c.Abort()
+			return
+		}
+
+		tokenString := authHeader[7:]
+		if tokenString == "" {
+			c.JSON(401, gin.H{"error": "Invalid token"})
+			c.Abort()
+			return
+		}
+
+		// Parse and validate the JWT
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			// Verify the token signing method is RS256
+			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+
+			return getPublicKey(token)
+		})
+
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Invalid token: " + err.Error()})
+			c.Abort()
+			return
+		}
+
+		if !token.Valid {
+			c.JSON(401, gin.H{"error": "Invalid token"})
+			c.Abort()
+			return
+		}
+
+		// Extract claims
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			c.JSON(401, gin.H{"error": "Invalid token claims"})
+			c.Abort()
+			return
+		}
+
+		// Verify token hasn't expired
+		if exp, ok := claims["exp"].(float64); ok {
+			if time.Now().Unix() > int64(exp) {
+				c.JSON(401, gin.H{"error": "Token has expired"})
+				c.Abort()
+				return
+			}
+		}
+
+		// Verify audience
+		if aud, ok := claims["aud"].([]interface{}); ok {
+			validAud := false
+			for _, a := range aud {
+				if a.(string) == "https://dev-lk0vcub54idn0l5c.us.auth0.com/api/v2/" {
+					validAud = true
+					break
+				}
+			}
+			if !validAud {
+				c.JSON(401, gin.H{"error": "Invalid token audience"})
+				c.Abort()
+				return
+			}
+		}
+
+		// Verify issuer
+		if iss, ok := claims["iss"].(string); ok {
+			if iss != "https://dev-lk0vcub54idn0l5c.us.auth0.com/" {
+				c.JSON(401, gin.H{"error": "Invalid token issuer"})
+				c.Abort()
+				return
+			}
+		}
+
+		// Store user ID in context
+		if sub, ok := claims["sub"].(string); ok {
+			c.Set("userID", sub)
+		} else {
+			c.JSON(401, gin.H{"error": "Invalid token subject"})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
 }
 
 func initDB() {
@@ -310,100 +565,75 @@ func initDB() {
 	dbName := os.Getenv("DB_NAME")
 	dbPort := os.Getenv("DB_PORT")
 
-	// If DATABASE_URL is provided (e.g., in production), use it instead
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
-			dbHost, dbUser, dbPassword, dbName, dbPort)
+	if dbPort == "" {
+		dbPort = "5432" // Default PostgreSQL port
 	}
 
-	// Connect to PostgreSQL
-	db, err = gorm.Open(postgres.Open(dbURL), &gorm.Config{})
+	// Construct database connection string with SSL enabled
+	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=require",
+		dbHost, dbUser, dbPassword, dbName, dbPort)
+
+	// Connect to database
+	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		log.Fatal("Failed to connect to database:", err)
 	}
 
-	// Migrate the schema
+	// Drop existing tables
+	db.Migrator().DropTable(&NutritionEntry{}, &DailyCalorieLimit{}, &Weight{})
+
+	// Create tables
 	db.AutoMigrate(&NutritionEntry{}, &DailyCalorieLimit{}, &Weight{})
 }
 
-func authMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		apiKey := c.GetHeader("X-API-Key")
-		expectedAPIKey := os.Getenv("API_KEY")
-
-		if apiKey == "" {
-			c.JSON(401, gin.H{"error": "API key is required"})
-			c.Abort()
-			return
-		}
-
-		if apiKey != expectedAPIKey {
-			c.JSON(401, gin.H{"error": "Invalid API key"})
-			c.Abort()
-			return
-		}
-
-		c.Next()
-	}
-}
-
 func main() {
-	// Load environment variables
-	if err := godotenv.Load(); err != nil {
+	err := godotenv.Load()
+	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
 
-	// Initialize database
 	initDB()
 
-	// Initialize Gin router
 	r := gin.Default()
 
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "X-API-Key"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-	}))
+	// Configure CORS
+	config := cors.DefaultConfig()
+	config.AllowOrigins = []string{"http://localhost:8080"}
+	config.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"}
+	config.AllowCredentials = true
+	r.Use(cors.New(config))
 
 	// Serve static files
+	r.Static("/static", "./static")
 	r.StaticFile("/", "./static/index.html")
+	r.StaticFile("/auth0-config.js", "./static/auth0-config.js")
 	r.StaticFile("/app.js", "./static/app.js")
-	r.StaticFile("/styles.css", "./static/styles.css")
 
-	// Apply auth middleware to all API routes
-	authorized := r.Group("/api")
-	authorized.Use(authMiddleware())
+	// Apply auth middleware to API routes
+	api := r.Group("/")
+	api.Use(authMiddleware())
 	{
-		// Daily Limits routes
-		authorized.POST("/daily-limits", createDailyLimit)
-		authorized.GET("/daily-limits/:date", getDailyLimit)
-
-		// Nutrition Entry routes
-		authorized.POST("/entries", createEntry)
-		authorized.GET("/entries", getEntries)
-		authorized.GET("/entries/:id", getEntry)
-		authorized.GET("/entries/date/:date", getEntriesByDate)
-		authorized.PUT("/entries/:id", updateEntry)
-		authorized.DELETE("/entries/:id", deleteEntry)
-
-		// Calorie Calculation route
-		authorized.GET("/calories/:date", getDailyCalories)
-
-		// Weight tracking endpoints
-		authorized.POST("/weights", createWeight)
-		authorized.GET("/weights/:id", getWeight)
-		authorized.GET("/weights/date/:date", getWeightsByDate)
-		authorized.PUT("/weights/:id", updateWeight)
-		authorized.DELETE("/weights/:id", deleteWeight)
+		api.POST("/daily-limit", createDailyLimit)
+		api.GET("/daily-limit/:date", getDailyLimit)
+		api.POST("/entries", createEntry)
+		api.GET("/entries", getEntries)
+		api.GET("/entries/:id", getEntry)
+		api.GET("/entries/date/:date", getEntriesByDate)
+		api.GET("/daily-calories/:date", getDailyCalories)
+		api.PUT("/entries/:id", updateEntry)
+		api.DELETE("/entries/:id", deleteEntry)
+		api.POST("/weight", createWeight)
+		api.GET("/weight", getWeights)
+		api.GET("/weight/:id", getWeight)
+		api.GET("/weight/date/:date", getWeightsByDate)
+		api.PUT("/weight/:id", updateWeight)
+		api.DELETE("/weight/:id", deleteWeight)
 	}
 
-	// Run server
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
+
 	r.Run(":" + port)
 }

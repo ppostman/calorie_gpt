@@ -1,53 +1,191 @@
-// API Configuration
-let API_KEY = localStorage.getItem('apiKey');
+// Auth0 client
+let auth0Client = null;
+let isLoading = false;
 
-function promptForApiKey() {
-    const key = prompt('Please enter your API key. If you need one, please check the documentation:');
-    if (!key) {
-        alert('API key is required to use this application.');
-        return promptForApiKey();
+// Initialize Auth0 client
+async function initializeAuth0() {
+    try {
+        auth0Client = await auth0.createAuth0Client(auth0Config);
+        
+        // Check for the code and state parameters
+        const query = window.location.search;
+        if (query.includes("code=") && query.includes("state=")) {
+            // Handle the redirect and retrieve tokens
+            await auth0Client.handleRedirectCallback();
+            // Clean up URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+
+        // Check if user is authenticated
+        const isAuthenticated = await auth0Client.isAuthenticated();
+        if (isAuthenticated) {
+            await updateAuthState();
+        } else {
+            handleAuthenticationFailure();
+        }
+    } catch (error) {
+        console.error('Error initializing Auth0:', error);
+        handleAuthenticationFailure();
     }
-    localStorage.setItem('apiKey', key);
-    API_KEY = key;
-    return key;
 }
 
-if (!API_KEY) {
-    API_KEY = promptForApiKey();
+// Update authentication state
+async function updateAuthState() {
+    try {
+        const user = await auth0Client.getUser();
+        const token = await auth0Client.getTokenSilently({
+            timeoutInSeconds: 60,
+            cacheMode: 'on'
+        });
+        handleAuthenticationSuccess(token, user);
+    } catch (error) {
+        console.error('Error updating auth state:', error);
+        if (error.error === 'login_required') {
+            handleAuthenticationFailure();
+        }
+    }
 }
 
-const API_BASE_URL = window.location.origin + '/api';
+// Handle successful authentication
+function handleAuthenticationSuccess(token, user) {
+    accessToken = token;
+    userEmail = user.email;
+    localStorage.setItem('accessToken', token);
+    localStorage.setItem('userEmail', user.email);
+    updateAuthUI();
+    loadInitialData();
+}
+
+// Handle authentication failure
+function handleAuthenticationFailure() {
+    accessToken = null;
+    userEmail = null;
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('userEmail');
+    updateAuthUI();
+}
+
+// Login handler
+async function handleLogin() {
+    try {
+        await auth0Client.loginWithRedirect({
+            authorizationParams: {
+                redirect_uri: window.location.origin,
+                scope: 'openid profile email offline_access'
+            }
+        });
+    } catch (error) {
+        console.error('Error during login:', error);
+        alert('Failed to log in. Please try again.');
+    }
+}
+
+// Logout handler
+async function handleLogout() {
+    try {
+        await auth0Client.logout({
+            logoutParams: {
+                returnTo: window.location.origin
+            }
+        });
+        handleAuthenticationFailure();
+    } catch (error) {
+        console.error('Error during logout:', error);
+        alert('Failed to log out. Please try again.');
+    }
+}
+
+// Auth Configuration
+let accessToken = null;
+let userEmail = null;
+
+// Check if we have a token in local storage
+async function checkAuth() {
+    // Auth0 will handle the token validation and renewal
+    await initializeAuth0();
+}
+
+// Update UI based on auth state
+function updateAuthUI() {
+    const isAuthenticated = !!accessToken;
+    
+    // Update visibility of auth sections
+    document.getElementById('login-section').classList.toggle('d-none', isAuthenticated);
+    document.getElementById('user-section').classList.toggle('d-none', !isAuthenticated);
+    document.getElementById('authenticated-view').classList.toggle('d-none', !isAuthenticated);
+    document.getElementById('unauthenticated-view').classList.toggle('d-none', isAuthenticated);
+    
+    if (isAuthenticated) {
+        document.getElementById('user-email').textContent = userEmail;
+    }
+}
+
+// Load all initial data
+async function loadInitialData() {
+    if (!accessToken || isLoading) return;
+    
+    isLoading = true;
+    try {
+        await Promise.all([
+            loadNutritionData(),
+            loadWeightData()
+        ]);
+    } catch (error) {
+        console.error('Error loading initial data:', error);
+    } finally {
+        isLoading = false;
+    }
+}
+
+// API Configuration
+const API_BASE_URL = window.location.origin;
+
+// Headers with bearer token
 const getHeaders = () => ({
     'Content-Type': 'application/json',
-    'X-API-Key': API_KEY
+    'Authorization': `Bearer ${accessToken}`
 });
-
-// Add function to update API key
-function updateApiKey() {
-    const newKey = promptForApiKey();
-    if (newKey) {
-        location.reload();
-    }
-}
 
 // Add error handling middleware
 async function fetchWithAuth(url, options = {}) {
+    if (!accessToken) {
+        updateAuthUI();
+        return null;
+    }
+
     try {
+        // Try to refresh the token before making the request
+        await updateAuthState();
+
         const response = await fetch(url, {
             ...options,
             headers: getHeaders(),
         });
         
         if (response.status === 401) {
-            alert('Invalid API key. Please enter a valid key.');
-            updateApiKey();
-            return null;
+            // Token might be expired, try to refresh
+            try {
+                await updateAuthState();
+                // Retry the request with the new token
+                const retryResponse = await fetch(url, {
+                    ...options,
+                    headers: getHeaders(),
+                });
+                if (retryResponse.status === 401) {
+                    // If still unauthorized after refresh, logout
+                    handleLogout();
+                    return null;
+                }
+                const text = await retryResponse.text();
+                return { json: JSON.parse(text), response: retryResponse };
+            } catch (error) {
+                console.error('Token refresh failed:', error);
+                handleLogout();
+                return null;
+            }
         }
 
-        // Log raw response for debugging
         const text = await response.text();
-        console.log('Raw response:', text);
-        
         try {
             return { json: JSON.parse(text), response };
         } catch (e) {
@@ -62,31 +200,13 @@ async function fetchWithAuth(url, options = {}) {
     }
 }
 
-// View Management
-document.querySelectorAll('.nav-link').forEach(link => {
-    link.addEventListener('click', (e) => {
-        e.preventDefault();
-        const view = e.target.dataset.view;
-        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
-        e.target.classList.add('active');
-        
-        if (view === 'nutrition') {
-            document.getElementById('nutrition-view').style.display = 'block';
-            document.getElementById('weight-view').style.display = 'none';
-            loadNutritionData();
-        } else {
-            document.getElementById('nutrition-view').style.display = 'none';
-            document.getElementById('weight-view').style.display = 'block';
-            loadWeightData();
-        }
-    });
-});
-
 // Nutrition Functions
 async function loadNutritionData() {
+    if (!accessToken) return;
+
     try {
         const [limitResult, entriesResult] = await Promise.all([
-            fetchWithAuth(`${API_BASE_URL}/daily-limits/${new Date().toISOString().split('T')[0]}`),
+            fetchWithAuth(`${API_BASE_URL}/daily-limit/${new Date().toISOString().split('T')[0]}`),
             fetchWithAuth(`${API_BASE_URL}/entries`)
         ]);
 
@@ -99,7 +219,7 @@ async function loadNutritionData() {
         updateFoodEntries(entries);
     } catch (error) {
         console.error('Error loading nutrition data:', error);
-        alert('Failed to load nutrition data. Please try again.');
+        // Don't show alert here as it might be too intrusive during background updates
     }
 }
 
@@ -143,16 +263,22 @@ function updateFoodEntries(entries) {
 let weightChart;
 
 async function loadWeightData() {
+    if (!accessToken) return;
+
     try {
-        const response = await fetchWithAuth(`${API_BASE_URL}/weights`);
+        const response = await fetchWithAuth(`${API_BASE_URL}/weight`);
         if (!response) return;
 
         const weights = response.json;
-        updateWeightChart(weights);
-        updateWeightEntries(weights);
+        if (Array.isArray(weights)) {
+            updateWeightChart(weights);
+            updateWeightEntries(weights);
+        } else {
+            console.error('Expected weights to be an array');
+        }
     } catch (error) {
         console.error('Error loading weight data:', error);
-        alert('Failed to load weight data. Please try again.');
+        // Don't show alert here as it might be too intrusive during background updates
     }
 }
 
@@ -210,71 +336,104 @@ function updateWeightEntries(weights) {
     });
 }
 
+// View Management
+document.querySelectorAll('.nav-link').forEach(link => {
+    link.addEventListener('click', async (e) => {
+        e.preventDefault();
+        if (!accessToken) return; // Don't allow navigation if not authenticated
+        if (isLoading) return; // Don't allow navigation while loading
+        
+        const view = e.target.dataset.view;
+        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+        e.target.classList.add('active');
+        
+        isLoading = true;
+        try {
+            if (view === 'nutrition') {
+                document.getElementById('nutrition-view').style.display = 'block';
+                document.getElementById('weight-view').style.display = 'none';
+                await loadNutritionData();
+            } else {
+                document.getElementById('nutrition-view').style.display = 'none';
+                document.getElementById('weight-view').style.display = 'block';
+                await loadWeightData();
+            }
+        } catch (error) {
+            console.error('Error switching views:', error);
+        } finally {
+            isLoading = false;
+        }
+    });
+});
+
 // Event Listeners
-document.getElementById('limit-form').addEventListener('submit', async (e) => {
+document.getElementById('login-button')?.addEventListener('click', handleLogin);
+document.getElementById('login-button-main')?.addEventListener('click', handleLogin);
+document.getElementById('logout-button')?.addEventListener('click', handleLogout);
+
+document.getElementById('limit-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (!accessToken) return;
+
     const data = {
-        base_calories: parseInt(document.getElementById('base-calories').value),
-        workout_calories: parseInt(document.getElementById('workout-calories').value) || 0
+        date: new Date().toISOString().split('T')[0],
+        base_calories: parseFloat(document.getElementById('base-calories').value),
+        workout_calories: parseFloat(document.getElementById('workout-calories').value || 0)
     };
 
-    try {
-        const response = await fetchWithAuth(`${API_BASE_URL}/daily-limits`, {
-            method: 'POST',
-            body: JSON.stringify(data)
-        });
-        if (!response) return;
+    const result = await fetchWithAuth(`${API_BASE_URL}/daily-limit`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+    });
+
+    if (result) {
         loadNutritionData();
-    } catch (error) {
-        console.error('Error setting daily limit:', error);
-        alert('Failed to set daily limit');
     }
 });
 
-document.getElementById('save-food').addEventListener('click', async () => {
+document.getElementById('save-food')?.addEventListener('click', async () => {
+    if (!accessToken) return;
+
     const data = {
-        name: document.getElementById('food-name').value,
-        calories: parseInt(document.getElementById('food-calories').value),
-        protein: parseInt(document.getElementById('food-protein').value) || null,
-        carbs: parseInt(document.getElementById('food-carbs').value) || null,
-        fat: parseInt(document.getElementById('food-fat').value) || null,
+        date: new Date().toISOString().split('T')[0],
+        food: document.getElementById('food-name').value,
+        calories: parseFloat(document.getElementById('food-calories').value),
+        protein: parseFloat(document.getElementById('food-protein').value || 0),
+        carbs: parseFloat(document.getElementById('food-carbs').value || 0),
+        fat: parseFloat(document.getElementById('food-fat').value || 0),
         description: document.getElementById('food-description').value
     };
 
-    try {
-        const response = await fetchWithAuth(`${API_BASE_URL}/entries`, {
-            method: 'POST',
-            body: JSON.stringify(data)
-        });
-        if (!response) return;
-        bootstrap.Modal.getInstance(document.getElementById('addFoodModal')).hide();
-        document.getElementById('food-form').reset();
+    const result = await fetchWithAuth(`${API_BASE_URL}/entries`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+    });
+
+    if (result) {
+        const modal = bootstrap.Modal.getInstance(document.getElementById('addFoodModal'));
+        modal.hide();
         loadNutritionData();
-    } catch (error) {
-        console.error('Error adding food entry:', error);
-        alert('Failed to add food entry');
     }
 });
 
-document.getElementById('save-weight').addEventListener('click', async () => {
+document.getElementById('save-weight')?.addEventListener('click', async () => {
+    if (!accessToken) return;
+
     const data = {
         weight: parseFloat(document.getElementById('weight-value').value),
         notes: document.getElementById('weight-notes').value,
         date: new Date().toISOString()
     };
 
-    try {
-        const response = await fetchWithAuth(`${API_BASE_URL}/weights`, {
-            method: 'POST',
-            body: JSON.stringify(data)
-        });
-        if (!response) return;
-        bootstrap.Modal.getInstance(document.getElementById('addWeightModal')).hide();
-        document.getElementById('weight-form').reset();
+    const result = await fetchWithAuth(`${API_BASE_URL}/weight`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+    });
+
+    if (result) {
+        const modal = bootstrap.Modal.getInstance(document.getElementById('addWeightModal'));
+        modal.hide();
         loadWeightData();
-    } catch (error) {
-        console.error('Error adding weight entry:', error);
-        alert('Failed to add weight entry');
     }
 });
 
@@ -297,7 +456,7 @@ async function deleteWeight(id) {
     if (!confirm('Are you sure you want to delete this weight entry?')) return;
 
     try {
-        const response = await fetchWithAuth(`${API_BASE_URL}/weights/${id}`, {
+        const response = await fetchWithAuth(`${API_BASE_URL}/weight/${id}`, {
             method: 'DELETE'
         });
         if (!response) return;
@@ -308,5 +467,5 @@ async function deleteWeight(id) {
     }
 }
 
-// Initial load
-loadNutritionData();
+// Initial auth check and data load
+checkAuth();
