@@ -418,7 +418,7 @@ paths:
   /calories/{date}:
     get:
       operationId: getDailyCalories
-      summary: Get calorie calculations for a specific date
+      summary: Get daily calorie calculations for a specific date
       security:
         - ApiKeyAuth: []
       parameters:
@@ -432,13 +432,19 @@ paths:
           example: "2025-02-16"
       responses:
         '200':
-          description: Calorie calculations including remaining calories
+          description: Daily calorie calculations
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/CalorieCalculation'
-        '404':
-          description: Daily limit not found for the date
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
           content:
             application/json:
               schema:

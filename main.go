@@ -619,7 +619,7 @@ func main() {
 		api.GET("/entries", getEntries)
 		api.GET("/entries/:id", getEntry)
 		api.GET("/entries/date/:date", getEntriesByDate)
-		api.GET("/daily-calories/:date", getDailyCalories)
+		api.GET("/calories/:date", getDailyCalories)
 		api.PUT("/entries/:id", updateEntry)
 		api.DELETE("/entries/:id", deleteEntry)
 		api.POST("/weight", createWeight)
