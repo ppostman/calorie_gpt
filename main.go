@@ -562,6 +562,21 @@ func requestLogger() gin.HandlerFunc {
 		path := c.Request.URL.Path
 		raw := c.Request.URL.RawQuery
 
+		// Log headers
+		headers := make(map[string]string)
+		for k, v := range c.Request.Header {
+			if len(v) > 0 {
+				// Mask sensitive information
+				if k == "Authorization" {
+					headers[k] = "Bearer ..."
+				} else {
+					headers[k] = v[0]
+				}
+			}
+		}
+		headerJSON, _ := json.Marshal(headers)
+		log.Printf("[GIN] Headers: %s", string(headerJSON))
+
 		// Process request
 		c.Next()
 
