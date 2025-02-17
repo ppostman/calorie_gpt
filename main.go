@@ -19,6 +19,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"github.com/golang-jwt/jwt"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type DailyCalorieLimit struct {
@@ -56,6 +57,26 @@ type Weight struct {
 	Date   string  `json:"date" gorm:"not null"`
 	Weight float64 `json:"weight" gorm:"not null"`
 	Notes  string  `json:"notes"`
+}
+
+type User struct {
+	gorm.Model
+	Username     string `json:"username" gorm:"unique;not null"`
+	PasswordHash string `json:"-" gorm:"not null"`
+}
+
+type RegisterRequest struct {
+	Username string `json:"username" binding:"required,min=3,max=50"`
+	Password string `json:"password" binding:"required,min=6"`
+}
+
+type LoginRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+}
+
+type LoginResponse struct {
+	Token string `json:"token"`
 }
 
 var db *gorm.DB
@@ -455,104 +476,158 @@ func getPublicKey(token *jwt.Token) (*rsa.PublicKey, error) {
 	return nil, fmt.Errorf("unable to find appropriate key")
 }
 
+func generateToken(userID uint) (string, error) {
+	token := jwt.New(jwt.SigningMethodHS256)
+	claims := token.Claims.(jwt.MapClaims)
+	claims["user_id"] = userID
+	claims["exp"] = time.Now().Add(time.Hour * 24).Unix()
+	
+	// In production, use a proper secret key from environment variables
+	return token.SignedString([]byte("your-secret-key"))
+}
+
+func hashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
+	return string(bytes), err
+}
+
+func checkPasswordHash(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
+}
+
+func register(c *gin.Context) {
+	var req RegisterRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check if username already exists
+	var existingUser User
+	if err := db.Where("username = ?", req.Username).First(&existingUser).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Username already exists"})
+		return
+	}
+
+	// Hash password
+	hashedPassword, err := hashPassword(req.Password)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating user"})
+		return
+	}
+
+	user := User{
+		Username:     req.Username,
+		PasswordHash: hashedPassword,
+	}
+
+	if err := db.Create(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating user"})
+		return
+	}
+
+	// Generate token
+	token, err := generateToken(user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating token"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, LoginResponse{Token: token})
+}
+
+func login(c *gin.Context) {
+	var req LoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var user User
+	if err := db.Where("username = ?", req.Username).First(&user).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+		return
+	}
+
+	if !checkPasswordHash(req.Password, user.PasswordHash) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+		return
+	}
+
+	token, err := generateToken(user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating token"})
+		return
+	}
+
+	c.JSON(http.StatusOK, LoginResponse{Token: token})
+}
+
 func authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.JSON(401, gin.H{"error": "Authorization header is required"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
 			c.Abort()
 			return
 		}
 
-		// Extract bearer token
-		if !strings.HasPrefix(authHeader, "Bearer ") {
-			c.JSON(401, gin.H{"error": "Invalid authorization header format"})
-			c.Abort()
-			return
-		}
-
-		tokenString := authHeader[7:]
-		if tokenString == "" {
-			c.JSON(401, gin.H{"error": "Invalid token"})
-			c.Abort()
-			return
-		}
-
-		// Parse and validate the JWT
+		tokenString := strings.Replace(authHeader, "Bearer ", "", 1)
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			// Verify the token signing method is RS256
-			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
-
-			return getPublicKey(token)
+			return []byte("your-secret-key"), nil
 		})
 
 		if err != nil {
-			c.JSON(401, gin.H{"error": "Invalid token: " + err.Error()})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			c.Abort()
 			return
 		}
 
-		if !token.Valid {
-			c.JSON(401, gin.H{"error": "Invalid token"})
-			c.Abort()
-			return
-		}
-
-		// Extract claims
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
-			c.JSON(401, gin.H{"error": "Invalid token claims"})
-			c.Abort()
-			return
-		}
-
-		// Verify token hasn't expired
-		if exp, ok := claims["exp"].(float64); ok {
-			if time.Now().Unix() > int64(exp) {
-				c.JSON(401, gin.H{"error": "Token has expired"})
-				c.Abort()
-				return
-			}
-		}
-
-		// Verify audience
-		if aud, ok := claims["aud"].([]interface{}); ok {
-			validAud := false
-			for _, a := range aud {
-				if a.(string) == "https://dev-lk0vcub54idn0l5c.us.auth0.com/api/v2/" {
-					validAud = true
-					break
-				}
-			}
-			if !validAud {
-				c.JSON(401, gin.H{"error": "Invalid token audience"})
-				c.Abort()
-				return
-			}
-		}
-
-		// Verify issuer
-		if iss, ok := claims["iss"].(string); ok {
-			if iss != "https://dev-lk0vcub54idn0l5c.us.auth0.com/" {
-				c.JSON(401, gin.H{"error": "Invalid token issuer"})
-				c.Abort()
-				return
-			}
-		}
-
-		// Store user ID in context
-		if sub, ok := claims["sub"].(string); ok {
-			c.Set("userID", sub)
+		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+			userID := uint(claims["user_id"].(float64))
+			c.Set("userID", userID)
+			c.Next()
 		} else {
-			c.JSON(401, gin.H{"error": "Invalid token subject"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
 			c.Abort()
 			return
 		}
-
-		c.Next()
 	}
+}
+
+func initDB() {
+	var err error
+
+	// Get database connection details from environment variables
+	dbHost := os.Getenv("DB_HOST")
+	dbUser := os.Getenv("DB_USER")
+	dbPassword := os.Getenv("DB_PASSWORD")
+	dbName := os.Getenv("DB_NAME")
+	dbPort := os.Getenv("DB_PORT")
+
+	if dbPort == "" {
+		dbPort = "5432" // Default PostgreSQL port
+	}
+
+	// Construct database connection string with SSL enabled
+	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=require",
+		dbHost, dbUser, dbPassword, dbName, dbPort)
+
+	// Connect to database
+	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		log.Fatal("Failed to connect to database:", err)
+	}
+
+	// Drop existing tables
+	db.Migrator().DropTable(&NutritionEntry{}, &DailyCalorieLimit{}, &Weight{}, &User{})
+
+	// Create tables
+	db.AutoMigrate(&NutritionEntry{}, &DailyCalorieLimit{}, &Weight{}, &User{})
 }
 
 func requestLogger() gin.HandlerFunc {
@@ -613,37 +688,6 @@ func requestLogger() gin.HandlerFunc {
 	}
 }
 
-func initDB() {
-	var err error
-
-	// Get database connection details from environment variables
-	dbHost := os.Getenv("DB_HOST")
-	dbUser := os.Getenv("DB_USER")
-	dbPassword := os.Getenv("DB_PASSWORD")
-	dbName := os.Getenv("DB_NAME")
-	dbPort := os.Getenv("DB_PORT")
-
-	if dbPort == "" {
-		dbPort = "5432" // Default PostgreSQL port
-	}
-
-	// Construct database connection string with SSL enabled
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=require",
-		dbHost, dbUser, dbPassword, dbName, dbPort)
-
-	// Connect to database
-	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		log.Fatal("Failed to connect to database:", err)
-	}
-
-	// Drop existing tables
-	db.Migrator().DropTable(&NutritionEntry{}, &DailyCalorieLimit{}, &Weight{})
-
-	// Create tables
-	db.AutoMigrate(&NutritionEntry{}, &DailyCalorieLimit{}, &Weight{})
-}
-
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -690,6 +734,8 @@ func main() {
 		api.GET("/weight/date/:date", getWeightsByDate)
 		api.PUT("/weight/:id", updateWeight)
 		api.DELETE("/weight/:id", deleteWeight)
+		api.POST("/register", register)
+		api.POST("/login", login)
 	}
 
 	port := os.Getenv("PORT")
