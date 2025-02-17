@@ -1,4 +1,4 @@
-openapi: 3.1.0
+openapi: 3.0.0
 info:
   title: Calorie GPT API
   description: |
@@ -21,18 +21,21 @@ servers:
     description: Local development server
 
 security:
-  - BearerAuth: []
+  - OAuth2: ['openid', 'profile', 'email', 'offline_access']
 
 components:
   securitySchemes:
-    BearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: |
-        Auth0 JWT token. Must be included in all requests in the Authorization header.
-        Format: Bearer <token>
-        Example: Authorization: Bearer eyJhbGciOiJSUzI1NiIs...
+    OAuth2:
+      type: oauth2
+      description: Auth0 OAuth2 authentication
+      flows:
+        implicit:
+          authorizationUrl: https://dev-lk0vcub54idn0l5c.us.auth0.com/authorize
+          scopes:
+            openid: OpenID Connect protocol
+            profile: User profile information
+            email: User email address
+            offline_access: Refresh token for offline access
 
   parameters:
     AuthorizationHeader:
@@ -221,7 +224,7 @@ paths:
       operationId: createDailyLimit
       summary: Create or update a daily calorie limit
       security:
-        - BearerAuth: []
+        - OAuth2: ['openid', 'profile', 'email', 'offline_access']
       requestBody:
         required: true
         content:
@@ -253,7 +256,7 @@ paths:
       operationId: getDailyLimit
       summary: Get daily calorie limit for a specific date
       security:
-        - BearerAuth: []
+        - OAuth2: ['openid', 'profile', 'email', 'offline_access']
       parameters:
         - name: date
           in: path
@@ -282,7 +285,7 @@ paths:
       operationId: createEntry
       summary: Create a new nutrition entry
       security:
-        - BearerAuth: []
+        - OAuth2: ['openid', 'profile', 'email', 'offline_access']
       requestBody:
         required: true
         content:
@@ -307,7 +310,7 @@ paths:
       operationId: getAllEntries
       summary: Get all nutrition entries
       security:
-        - BearerAuth: []
+        - OAuth2: ['openid', 'profile', 'email', 'offline_access']
       responses:
         '200':
           description: List of nutrition entries
@@ -323,7 +326,7 @@ paths:
       operationId: getEntry
       summary: Get a specific nutrition entry
       security:
-        - BearerAuth: []
+        - OAuth2: ['openid', 'profile', 'email', 'offline_access']
       parameters:
         - name: id
           in: path
@@ -349,7 +352,7 @@ paths:
       operationId: updateEntry
       summary: Update a nutrition entry
       security:
-        - BearerAuth: []
+        - OAuth2: ['openid', 'profile', 'email', 'offline_access']
       parameters:
         - name: id
           in: path
@@ -381,7 +384,7 @@ paths:
       operationId: deleteEntry
       summary: Delete a nutrition entry
       security:
-        - BearerAuth: []
+        - OAuth2: ['openid', 'profile', 'email', 'offline_access']
       parameters:
         - name: id
           in: path
@@ -412,7 +415,7 @@ paths:
       operationId: getEntriesByDate
       summary: Get entries for a specific date
       security:
-        - BearerAuth: []
+        - OAuth2: ['openid', 'profile', 'email', 'offline_access']
       parameters:
         - name: date
           in: path
@@ -437,7 +440,7 @@ paths:
       operationId: getDailyCalories
       summary: Get daily calorie calculations for a specific date
       security:
-        - BearerAuth: []
+        - OAuth2: ['openid', 'profile', 'email', 'offline_access']
       parameters:
         - name: date
           in: path
@@ -472,7 +475,7 @@ paths:
       operationId: getWeights
       summary: Get all weight records for the authenticated user
       security:
-        - BearerAuth: []
+        - OAuth2: ['openid', 'profile', 'email', 'offline_access']
       responses:
         '200':
           description: List of weight records
@@ -498,7 +501,7 @@ paths:
       operationId: createWeight
       summary: Create a new weight record
       security:
-        - BearerAuth: []
+        - OAuth2: ['openid', 'profile', 'email', 'offline_access']
       requestBody:
         required: true
         content:
@@ -524,7 +527,7 @@ paths:
       operationId: getWeight
       summary: Get a specific weight record
       security:
-        - BearerAuth: []
+        - OAuth2: ['openid', 'profile', 'email', 'offline_access']
       parameters:
         - name: id
           in: path
@@ -550,7 +553,7 @@ paths:
       operationId: updateWeight
       summary: Update a weight record
       security:
-        - BearerAuth: []
+        - OAuth2: ['openid', 'profile', 'email', 'offline_access']
       parameters:
         - name: id
           in: path
@@ -582,7 +585,7 @@ paths:
       operationId: deleteWeight
       summary: Delete a weight record
       security:
-        - BearerAuth: []
+        - OAuth2: ['openid', 'profile', 'email', 'offline_access']
       parameters:
         - name: id
           in: path
@@ -613,7 +616,7 @@ paths:
       operationId: getWeightsByDate
       summary: Get weight records for a specific date
       security:
-        - BearerAuth: []
+        - OAuth2: ['openid', 'profile', 'email', 'offline_access']
       parameters:
         - name: date
           in: path
