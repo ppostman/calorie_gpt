@@ -21,14 +21,20 @@ servers:
     description: Local development server
 
 security:
-  - bearerAuth: []
+  - oauth2: []
 
 components:
   securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
+    oauth2:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://dev-lk0vcub54idn0l5c.us.auth0.com/authorize
+          scopes:
+            openid: OpenID Connect protocol
+            profile: User profile information
+            email: User email address
+            offline_access: Refresh token access
 
   parameters:
     AuthorizationHeader:
@@ -211,67 +217,13 @@ components:
               format: date-time
               example: "2025-02-16T10:30:00Z"
 
-    User:
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 1
-        username:
-          type: string
-          example: "john_doe"
-        created_at:
-          type: string
-          format: date-time
-          example: "2025-02-16T10:30:00Z"
-        updated_at:
-          type: string
-          format: date-time
-          example: "2025-02-16T10:30:00Z"
-
-    RegisterRequest:
-      type: object
-      required:
-        - username
-        - password
-      properties:
-        username:
-          type: string
-          minLength: 3
-          maxLength: 50
-          example: "john_doe"
-        password:
-          type: string
-          minLength: 6
-          example: "securepassword123"
-
-    LoginRequest:
-      type: object
-      required:
-        - username
-        - password
-      properties:
-        username:
-          type: string
-          example: "john_doe"
-        password:
-          type: string
-          example: "securepassword123"
-
-    LoginResponse:
-      type: object
-      properties:
-        token:
-          type: string
-          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-
 paths:
   /daily-limits:
     post:
       operationId: createDailyLimit
       summary: Create or update a daily calorie limit
       security:
-        - bearerAuth: []
+        - oauth2: []
       requestBody:
         required: true
         content:
@@ -303,7 +255,7 @@ paths:
       operationId: getDailyLimit
       summary: Get daily calorie limit for a specific date
       security:
-        - bearerAuth: []
+        - oauth2: []
       parameters:
         - name: date
           in: path
@@ -332,7 +284,7 @@ paths:
       operationId: createEntry
       summary: Create a new nutrition entry
       security:
-        - bearerAuth: []
+        - oauth2: []
       requestBody:
         required: true
         content:
@@ -357,7 +309,7 @@ paths:
       operationId: getAllEntries
       summary: Get all nutrition entries
       security:
-        - bearerAuth: []
+        - oauth2: []
       responses:
         '200':
           description: List of nutrition entries
@@ -373,7 +325,7 @@ paths:
       operationId: getEntry
       summary: Get a specific nutrition entry
       security:
-        - bearerAuth: []
+        - oauth2: []
       parameters:
         - name: id
           in: path
@@ -399,7 +351,7 @@ paths:
       operationId: updateEntry
       summary: Update a nutrition entry
       security:
-        - bearerAuth: []
+        - oauth2: []
       parameters:
         - name: id
           in: path
@@ -431,7 +383,7 @@ paths:
       operationId: deleteEntry
       summary: Delete a nutrition entry
       security:
-        - bearerAuth: []
+        - oauth2: []
       parameters:
         - name: id
           in: path
@@ -462,7 +414,7 @@ paths:
       operationId: getEntriesByDate
       summary: Get entries for a specific date
       security:
-        - bearerAuth: []
+        - oauth2: []
       parameters:
         - name: date
           in: path
@@ -487,7 +439,7 @@ paths:
       operationId: getDailyCalories
       summary: Get daily calorie calculations for a specific date
       security:
-        - bearerAuth: []
+        - oauth2: []
       parameters:
         - name: date
           in: path
@@ -522,7 +474,7 @@ paths:
       operationId: getWeights
       summary: Get all weight records for the authenticated user
       security:
-        - bearerAuth: []
+        - oauth2: []
       responses:
         '200':
           description: List of weight records
@@ -548,7 +500,7 @@ paths:
       operationId: createWeight
       summary: Create a new weight record
       security:
-        - bearerAuth: []
+        - oauth2: []
       requestBody:
         required: true
         content:
@@ -574,7 +526,7 @@ paths:
       operationId: getWeight
       summary: Get a specific weight record
       security:
-        - bearerAuth: []
+        - oauth2: []
       parameters:
         - name: id
           in: path
@@ -600,7 +552,7 @@ paths:
       operationId: updateWeight
       summary: Update a weight record
       security:
-        - bearerAuth: []
+        - oauth2: []
       parameters:
         - name: id
           in: path
@@ -632,7 +584,7 @@ paths:
       operationId: deleteWeight
       summary: Delete a weight record
       security:
-        - bearerAuth: []
+        - oauth2: []
       parameters:
         - name: id
           in: path
@@ -663,7 +615,7 @@ paths:
       operationId: getWeightsByDate
       summary: Get weight records for a specific date
       security:
-        - bearerAuth: []
+        - oauth2: []
       parameters:
         - name: date
           in: path
@@ -682,75 +634,3 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Weight'
-
-  /register:
-    post:
-      operationId: register
-      summary: Register a new user
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RegisterRequest'
-      responses:
-        '201':
-          description: User registered successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LoginResponse'
-        '400':
-          description: Invalid input
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '409':
-          description: Username already exists
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /login:
-    post:
-      operationId: login
-      summary: Login with username and password
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LoginRequest'
-      responses:
-        '200':
-          description: Login successful
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LoginResponse'
-        '400':
-          description: Invalid input
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Invalid credentials
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
