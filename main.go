@@ -555,6 +555,49 @@ func authMiddleware() gin.HandlerFunc {
 	}
 }
 
+func requestLogger() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Start timer
+		start := time.Now()
+		path := c.Request.URL.Path
+		raw := c.Request.URL.RawQuery
+
+		// Process request
+		c.Next()
+
+		// Stop timer
+		end := time.Now()
+		latency := end.Sub(start)
+
+		clientIP := c.ClientIP()
+		method := c.Request.Method
+		statusCode := c.Writer.Status()
+		userID, _ := c.Get("userID")
+		if userID == nil {
+			userID = "anonymous"
+		}
+
+		if raw != "" {
+			path = path + "?" + raw
+		}
+
+		log.Printf("[GIN] %v | %3d | %13v | %15s | %-7s %s | UserID: %v",
+			end.Format("2006/01/02 - 15:04:05"),
+			statusCode,
+			latency,
+			clientIP,
+			method,
+			path,
+			userID,
+		)
+
+		// Log errors if any
+		if len(c.Errors) > 0 {
+			log.Printf("[GIN] Errors: %v", c.Errors.String())
+		}
+	}
+}
+
 func initDB() {
 	var err error
 
@@ -594,13 +637,16 @@ func main() {
 
 	initDB()
 
-	r := gin.Default()
-
-	// Configure CORS
+	r := gin.New()
+	
+	r.Use(gin.Recovery())
+	
+	r.Use(requestLogger())
+	
 	config := cors.DefaultConfig()
 	config.AllowOrigins = []string{"http://localhost:8080"}
-	config.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"}
 	config.AllowCredentials = true
+	config.AddAllowHeaders("Authorization")
 	r.Use(cors.New(config))
 
 	// Serve static files
