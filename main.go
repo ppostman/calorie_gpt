@@ -646,7 +646,8 @@ func main() {
 	config := cors.DefaultConfig()
 	config.AllowOrigins = []string{"http://localhost:8080"}
 	config.AllowCredentials = true
-	config.AddAllowHeaders("Authorization")
+	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization"}
+	config.ExposeHeaders = []string{"Content-Length", "Authorization"}
 	r.Use(cors.New(config))
 
 	// Serve static files

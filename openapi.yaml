@@ -10,7 +10,8 @@ info:
     - Calorie calculations and remaining calorie tracking
 
     Authentication:
-    All endpoints require an Auth0 JWT token to be sent in the Authorization header.
+    All endpoints require an Auth0 JWT token to be sent in the Authorization header with the format: 'Bearer <token>'.
+    The token must be obtained through the Auth0 authentication flow.
   version: 1.0.0
 
 servers:
@@ -28,7 +29,23 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Auth0 JWT token. Must be included in all requests in the Authorization header.
+      description: |
+        Auth0 JWT token. Must be included in all requests in the Authorization header.
+        Format: Bearer <token>
+        Example: Authorization: Bearer eyJhbGciOiJSUzI1NiIs...
+
+  parameters:
+    AuthorizationHeader:
+      name: Authorization
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^Bearer [A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$'
+      description: |
+        JWT Bearer token from Auth0
+        Format: Bearer <token>
+        Example: Bearer eyJhbGciOiJSUzI1NiIs...
 
   schemas:
     DailyCalorieLimitInput:
