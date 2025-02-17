@@ -445,6 +445,32 @@ paths:
                 $ref: '#/components/schemas/Error'
 
   /weights:
+    get:
+      operationId: getWeights
+      summary: Get all weight records for the authenticated user
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: List of weight records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Weight'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     post:
       operationId: createWeight
       summary: Create a new weight record
