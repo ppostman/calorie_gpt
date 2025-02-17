@@ -10,7 +10,7 @@ info:
     - Calorie calculations and remaining calorie tracking
 
     Authentication:
-    All endpoints require an API key to be sent in the X-API-Key header.
+    All endpoints require an Auth0 JWT token to be sent in the Authorization header.
   version: 1.0.0
 
 servers:
@@ -20,15 +20,15 @@ servers:
     description: Local development server
 
 security:
-  - ApiKeyAuth: []
+  - BearerAuth: []
 
 components:
   securitySchemes:
-    ApiKeyAuth:
-      type: apiKey
-      in: header
-      name: X-API-Key
-      description: API key for authentication. Must be included in all requests.
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Auth0 JWT token. Must be included in all requests in the Authorization header.
 
   schemas:
     DailyCalorieLimitInput:
@@ -204,7 +204,7 @@ paths:
       operationId: createDailyLimit
       summary: Create or update a daily calorie limit
       security:
-        - ApiKeyAuth: []
+        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -236,7 +236,7 @@ paths:
       operationId: getDailyLimit
       summary: Get daily calorie limit for a specific date
       security:
-        - ApiKeyAuth: []
+        - BearerAuth: []
       parameters:
         - name: date
           in: path
@@ -265,7 +265,7 @@ paths:
       operationId: createEntry
       summary: Create a new nutrition entry
       security:
-        - ApiKeyAuth: []
+        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -290,7 +290,7 @@ paths:
       operationId: getAllEntries
       summary: Get all nutrition entries
       security:
-        - ApiKeyAuth: []
+        - BearerAuth: []
       responses:
         '200':
           description: List of nutrition entries
@@ -306,7 +306,7 @@ paths:
       operationId: getEntry
       summary: Get a specific nutrition entry
       security:
-        - ApiKeyAuth: []
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -332,7 +332,7 @@ paths:
       operationId: updateEntry
       summary: Update a nutrition entry
       security:
-        - ApiKeyAuth: []
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -364,7 +364,7 @@ paths:
       operationId: deleteEntry
       summary: Delete a nutrition entry
       security:
-        - ApiKeyAuth: []
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -395,7 +395,7 @@ paths:
       operationId: getEntriesByDate
       summary: Get entries for a specific date
       security:
-        - ApiKeyAuth: []
+        - BearerAuth: []
       parameters:
         - name: date
           in: path
@@ -420,7 +420,7 @@ paths:
       operationId: getDailyCalories
       summary: Get daily calorie calculations for a specific date
       security:
-        - ApiKeyAuth: []
+        - BearerAuth: []
       parameters:
         - name: date
           in: path
@@ -455,7 +455,7 @@ paths:
       operationId: getWeights
       summary: Get all weight records for the authenticated user
       security:
-        - ApiKeyAuth: []
+        - BearerAuth: []
       responses:
         '200':
           description: List of weight records
@@ -481,7 +481,7 @@ paths:
       operationId: createWeight
       summary: Create a new weight record
       security:
-        - ApiKeyAuth: []
+        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -507,7 +507,7 @@ paths:
       operationId: getWeight
       summary: Get a specific weight record
       security:
-        - ApiKeyAuth: []
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -533,7 +533,7 @@ paths:
       operationId: updateWeight
       summary: Update a weight record
       security:
-        - ApiKeyAuth: []
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -565,7 +565,7 @@ paths:
       operationId: deleteWeight
       summary: Delete a weight record
       security:
-        - ApiKeyAuth: []
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -596,7 +596,7 @@ paths:
       operationId: getWeightsByDate
       summary: Get weight records for a specific date
       security:
-        - ApiKeyAuth: []
+        - BearerAuth: []
       parameters:
         - name: date
           in: path
