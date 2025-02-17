@@ -10,17 +10,18 @@ import (
 	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"github.com/gin-contrib/cors"
 )
 
 type DailyCalorieLimit struct {
-	gorm.Model
+	gorm.Model      `json:"-"`
 	Date            string  `json:"date"`
 	BaseCalories    float64 `json:"base_calories"`
 	WorkoutCalories float64 `json:"workout_calories"`
 }
 
 type NutritionEntry struct {
-	gorm.Model
+	gorm.Model   `json:"-"`
 	Date        string  `json:"date"`
 	Food        string  `json:"food"`
 	Calories    float64 `json:"calories"`
@@ -40,7 +41,7 @@ type CalorieCalculation struct {
 }
 
 type Weight struct {
-	gorm.Model
+	gorm.Model `json:"-"`
 	Date   string  `json:"date" gorm:"not null"`
 	Weight float64 `json:"weight" gorm:"not null"`
 	Notes  string  `json:"notes"`
@@ -76,8 +77,12 @@ func getDailyLimit(c *gin.Context) {
 	var limit DailyCalorieLimit
 	
 	if err := db.Where("date = ?", date).First(&limit).Error; err != nil {
-		c.JSON(404, gin.H{"error": "Daily limit not found"})
-		return
+		// Return a default limit if none exists
+		limit = DailyCalorieLimit{
+			Date:            date,
+			BaseCalories:    2000, // Default daily calorie limit
+			WorkoutCalories: 0,
+		}
 	}
 	
 	c.JSON(200, limit)
@@ -96,7 +101,9 @@ func createEntry(c *gin.Context) {
 
 func getEntries(c *gin.Context) {
 	var entries []NutritionEntry
-	db.Find(&entries)
+	if err := db.Find(&entries).Error; err != nil {
+		entries = []NutritionEntry{} // Return empty array if error
+	}
 	c.JSON(200, entries)
 }
 
@@ -353,22 +360,21 @@ func main() {
 	// Initialize Gin router
 	r := gin.Default()
 
-	// Enable CORS
-	r.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-API-Key")
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "X-API-Key"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+	}))
 
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
+	// Serve static files
+	r.StaticFile("/", "./static/index.html")
+	r.StaticFile("/app.js", "./static/app.js")
+	r.StaticFile("/styles.css", "./static/styles.css")
 
-		c.Next()
-	})
-
-	// Apply auth middleware to all routes
-	authorized := r.Group("/")
+	// Apply auth middleware to all API routes
+	authorized := r.Group("/api")
 	authorized.Use(authMiddleware())
 	{
 		// Daily Limits routes
