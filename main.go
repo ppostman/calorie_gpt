@@ -678,10 +678,16 @@ func handleOAuth2Authorize(c *gin.Context) {
 		redirectURI = "/"
 	}
 
+	// Get the domain from the request
+	domain := c.Request.Host
+	if strings.Contains(domain, ":") {
+		domain = strings.Split(domain, ":")[0]
+	}
+
 	// Store state and redirect_uri in cookies with secure settings
-	c.SetSameSite(http.SameSiteStrictMode)                                    // Add CSRF protection
-	c.SetCookie("oauth_state", state, 3600, "/", "", true, true)              // Secure + HttpOnly
-	c.SetCookie("oauth_redirect_uri", redirectURI, 3600, "/", "", true, true) // Secure + HttpOnly
+	c.SetSameSite(http.SameSiteLaxMode)                                    // Change to Lax mode for cross-site
+	c.SetCookie("oauth_state", state, 3600, "/", domain, true, true)              // Set domain dynamically
+	c.SetCookie("oauth_redirect_uri", redirectURI, 3600, "/", domain, true, true) // Set domain dynamically
 
 	// Build authorization URL with all necessary parameters
 	params := url.Values{}
@@ -695,7 +701,7 @@ func handleOAuth2Authorize(c *gin.Context) {
 	// Add PKCE for additional security
 	codeVerifier := generateCodeVerifier()
 	codeChallenge := generateCodeChallenge(codeVerifier)
-	c.SetCookie("code_verifier", codeVerifier, 3600, "/", "", true, true)
+	c.SetCookie("code_verifier", codeVerifier, 3600, "/", domain, true, true)
 	params.Set("code_challenge", codeChallenge)
 	params.Set("code_challenge_method", "S256")
 
@@ -705,24 +711,29 @@ func handleOAuth2Authorize(c *gin.Context) {
 	c.Redirect(http.StatusTemporaryRedirect, authURL)
 }
 
-func generateCodeVerifier() string {
-	bytes := make([]byte, 32)
-	rand.Read(bytes)
-	return base64.RawURLEncoding.EncodeToString(bytes)
-}
-
-func generateCodeChallenge(verifier string) string {
-	hash := sha256.Sum256([]byte(verifier))
-	return base64.RawURLEncoding.EncodeToString(hash[:])
-}
-
 func handleOAuth2Callback(c *gin.Context) {
 	code := c.Query("code")
 	state := c.Query("state")
 
+	// Get the domain from the request
+	domain := c.Request.Host
+	if strings.Contains(domain, ":") {
+		domain = strings.Split(domain, ":")[0]
+	}
+
+	// Add debug logging
+	log.Printf("[OAuth2] Callback received - State: %s, Domain: %s", state, domain)
+	for _, cookie := range c.Request.Cookies() {
+		log.Printf("[OAuth2] Cookie found - Name: %s, Value: %s", cookie.Name, cookie.Value)
+	}
+
 	// Verify state from cookie
-	storedState, _ := c.Cookie("oauth_state")
+	storedState, err := c.Cookie("oauth_state")
+	if err != nil {
+		log.Printf("[OAuth2] Error getting state cookie: %v", err)
+	}
 	if state == "" || state != storedState {
+		log.Printf("[OAuth2] State mismatch - Got: %s, Expected: %s", state, storedState)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid state parameter"})
 		return
 	}
@@ -734,8 +745,9 @@ func handleOAuth2Callback(c *gin.Context) {
 	}
 
 	// Clear the cookies with secure settings
-	c.SetCookie("oauth_state", "", -1, "/", "", true, true)        // Secure + HttpOnly
-	c.SetCookie("oauth_redirect_uri", "", -1, "/", "", true, true) // Secure + HttpOnly
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("oauth_state", "", -1, "/", domain, true, true)
+	c.SetCookie("oauth_redirect_uri", "", -1, "/", domain, true, true)
 
 	// Exchange code for token with all necessary parameters
 	data := url.Values{}
@@ -748,14 +760,14 @@ func handleOAuth2Callback(c *gin.Context) {
 	// Get the code verifier from cookie
 	codeVerifier, err := c.Cookie("code_verifier")
 	if err != nil || codeVerifier == "" {
-		log.Printf("[OAuth2] Missing code verifier")
+		log.Printf("[OAuth2] Missing code verifier: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing code verifier"})
 		return
 	}
 	data.Set("code_verifier", codeVerifier)
 
 	// Clear code verifier cookie
-	c.SetCookie("code_verifier", "", -1, "/", "", true, true)
+	c.SetCookie("code_verifier", "", -1, "/", domain, true, true)
 
 	// Create token request
 	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, strings.NewReader(data.Encode()))
@@ -895,6 +907,17 @@ func getClaimString(claims jwt.MapClaims, key string, defaultValue string) strin
 		}
 	}
 	return defaultValue
+}
+
+func generateCodeVerifier() string {
+	bytes := make([]byte, 32)
+	rand.Read(bytes)
+	return base64.RawURLEncoding.EncodeToString(bytes)
+}
+
+func generateCodeChallenge(verifier string) string {
+	hash := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(hash[:])
 }
 
 func main() {
