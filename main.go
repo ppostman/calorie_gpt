@@ -720,6 +720,42 @@ func handleOAuth2Callback(c *gin.Context) {
 	c.JSON(http.StatusOK, tokenResponse)
 }
 
+func handleUserInfo(c *gin.Context) {
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "No authorization header"})
+		return
+	}
+
+	// Extract token
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header"})
+		return
+	}
+
+	// Verify token and get claims
+	token, err := jwt.Parse(parts[1], getPublicKey)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+		return
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user info"})
+		return
+	}
+
+	// Return user info from token claims
+	c.JSON(http.StatusOK, gin.H{
+		"sub": claims["sub"],
+		"email": claims["email"],
+		"name": claims["name"],
+		"picture": claims["picture"],
+	})
+}
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -727,33 +763,35 @@ func main() {
 	}
 
 	initOAuth2Config()
-
 	initDB()
 
 	r := gin.New()
-	
 	r.Use(gin.Recovery())
 	r.Use(requestLogger())
 	
+	// Configure CORS
 	config := cors.DefaultConfig()
-	config.AllowOrigins = []string{"http://localhost:8080", "https://chat.openai.com"}
+	config.AllowOrigins = []string{"http://localhost:8080"}
 	config.AllowCredentials = true
 	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization"}
 	config.ExposeHeaders = []string{"Content-Length", "Authorization"}
 	r.Use(cors.New(config))
 
-	r.Static("/.well-known", ".well-known")
-	r.StaticFile("/openapi.yaml", "openapi.yaml")
-	r.StaticFile("/logo.png", "static/logo.png")
+	// OAuth2 endpoints
+	oauth := r.Group("/oauth2")
+	{
+		oauth.GET("/authorize", handleOAuth2Authorize)
+		oauth.GET("/callback", handleOAuth2Callback)
+		oauth.GET("/userinfo", handleUserInfo)
+	}
 
-	r.GET("/oauth2/authorize", handleOAuth2Authorize)
-	r.GET("/oauth2/callback", handleOAuth2Callback)
-
+	// Static files
 	r.Static("/static", "./static")
 	r.StaticFile("/", "./static/index.html")
 	r.StaticFile("/auth0-config.js", "./static/auth0-config.js")
 	r.StaticFile("/app.js", "./static/app.js")
 
+	// Protected API routes
 	api := r.Group("/")
 	api.Use(authMiddleware())
 	{
@@ -779,5 +817,6 @@ func main() {
 		port = "8080"
 	}
 
+	log.Printf("Server starting on port %s", port)
 	r.Run(":" + port)
 }
