@@ -684,10 +684,14 @@ func handleOAuth2Authorize(c *gin.Context) {
 		domain = strings.Split(domain, ":")[0]
 	}
 
-	// Store state and redirect_uri in cookies with secure settings
-	c.SetSameSite(http.SameSiteLaxMode)                                    // Change to Lax mode for cross-site
-	c.SetCookie("oauth_state", state, 3600, "/", domain, true, true)              // Set domain dynamically
-	c.SetCookie("oauth_redirect_uri", redirectURI, 3600, "/", domain, true, true) // Set domain dynamically
+	log.Printf("[OAuth2] Setting cookies for domain: %s", domain)
+	log.Printf("[OAuth2] Generated state: %s", state)
+
+	// Store state and redirect_uri in cookies with more permissive settings
+	c.SetSameSite(http.SameSiteLaxMode)
+	// Set cookies with less restrictive settings for testing
+	c.SetCookie("oauth_state", state, 3600, "/", "", false, false)              // Remove Secure and HttpOnly for testing
+	c.SetCookie("oauth_redirect_uri", redirectURI, 3600, "/", "", false, false) // Remove Secure and HttpOnly for testing
 
 	// Build authorization URL with all necessary parameters
 	params := url.Values{}
@@ -701,11 +705,12 @@ func handleOAuth2Authorize(c *gin.Context) {
 	// Add PKCE for additional security
 	codeVerifier := generateCodeVerifier()
 	codeChallenge := generateCodeChallenge(codeVerifier)
-	c.SetCookie("code_verifier", codeVerifier, 3600, "/", domain, true, true)
+	c.SetCookie("code_verifier", codeVerifier, 3600, "/", "", false, false) // Remove Secure and HttpOnly for testing
 	params.Set("code_challenge", codeChallenge)
 	params.Set("code_challenge_method", "S256")
 
 	authURL := oauth2Config.AuthURL + "?" + params.Encode()
+	log.Printf("[OAuth2] Redirecting to Auth0 with state: %s", state)
 
 	// Redirect to Auth0 login page
 	c.Redirect(http.StatusTemporaryRedirect, authURL)
@@ -715,33 +720,47 @@ func handleOAuth2Callback(c *gin.Context) {
 	code := c.Query("code")
 	state := c.Query("state")
 
+	log.Printf("[OAuth2] Callback received - Code: %s, State: %s", code, state)
+
+	// Log all request headers
+	for name, values := range c.Request.Header {
+		log.Printf("[OAuth2] Header %s: %v", name, values)
+	}
+
+	// Log all cookies
+	for _, cookie := range c.Request.Cookies() {
+		log.Printf("[OAuth2] Cookie found - Name: %s, Value: %s, Domain: %s, Path: %s", 
+			cookie.Name, cookie.Value, cookie.Domain, cookie.Path)
+	}
+
+	// Verify state from cookie with detailed logging
+	storedState, err := c.Cookie("oauth_state")
+	if err != nil {
+		log.Printf("[OAuth2] Error getting state cookie: %v", err)
+		// Try to get raw cookie
+		if rawCookie, err := c.Request.Cookie("oauth_state"); err == nil {
+			log.Printf("[OAuth2] Raw cookie found - Name: %s, Value: %s, Domain: %s, Path: %s",
+				rawCookie.Name, rawCookie.Value, rawCookie.Domain, rawCookie.Path)
+		}
+	}
+	log.Printf("[OAuth2] Stored state: %s, Received state: %s", storedState, state)
+
+	if state == "" || state != storedState {
+		log.Printf("[OAuth2] State mismatch - Got: %s, Expected: %s", state, storedState)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid state parameter",
+			"details": gin.H{
+				"received_state": state,
+				"stored_state":  storedState,
+			},
+		})
+		return
+	}
+
 	// Get the domain from the request
 	domain := c.Request.Host
 	if strings.Contains(domain, ":") {
 		domain = strings.Split(domain, ":")[0]
-	}
-
-	// Add debug logging
-	log.Printf("[OAuth2] Callback received - State: %s, Domain: %s", state, domain)
-	for _, cookie := range c.Request.Cookies() {
-		log.Printf("[OAuth2] Cookie found - Name: %s, Value: %s", cookie.Name, cookie.Value)
-	}
-
-	// Verify state from cookie
-	storedState, err := c.Cookie("oauth_state")
-	if err != nil {
-		log.Printf("[OAuth2] Error getting state cookie: %v", err)
-	}
-	if state == "" || state != storedState {
-		log.Printf("[OAuth2] State mismatch - Got: %s, Expected: %s", state, storedState)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid state parameter"})
-		return
-	}
-
-	// Get stored redirect_uri
-	redirectURI, _ := c.Cookie("oauth_redirect_uri")
-	if redirectURI == "" {
-		redirectURI = "/"
 	}
 
 	// Clear the cookies with secure settings
