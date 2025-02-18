@@ -718,6 +718,14 @@ func generateCodeChallenge(verifier string) string {
 
 func handleOAuth2Callback(c *gin.Context) {
 	code := c.Query("code")
+	state := c.Query("state")
+
+	// Verify state from cookie
+	storedState, _ := c.Cookie("oauth_state")
+	if state == "" || state != storedState {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid state parameter"})
+		return
+	}
 
 	// Get stored redirect_uri
 	redirectURI, _ := c.Cookie("oauth_redirect_uri")
@@ -904,10 +912,29 @@ func main() {
 
 	// Configure CORS
 	config := cors.DefaultConfig()
-	config.AllowOrigins = []string{"http://localhost:8080"}
+	// Allow requests from both localhost and your GPT integration
+	config.AllowOrigins = []string{
+		"http://localhost:8080",
+		"https://chat.openai.com",
+		"https://chat.openai.com/",
+		"https://chatgpt.com",
+		"https://chatgpt.com/",
+	}
 	config.AllowCredentials = true
-	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization"}
-	config.ExposeHeaders = []string{"Content-Length", "Authorization"}
+	config.AllowHeaders = []string{
+		"Origin",
+		"Content-Type",
+		"Accept",
+		"Authorization",
+		"Cookie",
+		"Set-Cookie",
+	}
+	config.ExposeHeaders = []string{
+		"Content-Length",
+		"Authorization",
+		"Set-Cookie",
+	}
+	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
 	r.Use(cors.New(config))
 
 	// OAuth2 endpoints
