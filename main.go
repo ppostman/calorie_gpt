@@ -763,6 +763,12 @@ func handleOAuth2Callback(c *gin.Context) {
 		domain = strings.Split(domain, ":")[0]
 	}
 
+	// Get stored redirect_uri
+	redirectURI, _ := c.Cookie("oauth_redirect_uri")
+	if redirectURI == "" {
+		redirectURI = "/"
+	}
+
 	// Clear the cookies with secure settings
 	c.SetSameSite(http.SameSiteLaxMode)
 	c.SetCookie("oauth_state", "", -1, "/", domain, true, true)
