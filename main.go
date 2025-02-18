@@ -718,14 +718,6 @@ func generateCodeChallenge(verifier string) string {
 
 func handleOAuth2Callback(c *gin.Context) {
 	code := c.Query("code")
-	state := c.Query("state")
-
-	// Verify state from cookie
-	storedState, _ := c.Cookie("oauth_state")
-	if state == "" || state != storedState {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid state parameter"})
-		return
-	}
 
 	// Get stored redirect_uri
 	redirectURI, _ := c.Cookie("oauth_redirect_uri")
@@ -847,7 +839,7 @@ func handleUserInfo(c *gin.Context) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		// Log token details for debugging
 		log.Printf("[UserInfo] Token Headers: %+v", token.Header)
-		
+
 		return getPublicKey(token)
 	})
 
