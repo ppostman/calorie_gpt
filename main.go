@@ -683,10 +683,7 @@ func handleOAuth2Authorize(c *gin.Context) {
 
 func handleOAuth2Callback(c *gin.Context) {
 	code := c.Query("code")
-	state := c.Query("state")
-
-	// Verify state to prevent CSRF
-	// In a production environment, you should store and verify the state
+	// state := c.Query("state")  // Commented out until we implement state verification
 
 	// Exchange code for token
 	data := url.Values{}
@@ -735,7 +732,9 @@ func handleUserInfo(c *gin.Context) {
 	}
 
 	// Verify token and get claims
-	token, err := jwt.Parse(parts[1], getPublicKey)
+	token, err := jwt.Parse(parts[1], func(token *jwt.Token) (interface{}, error) {
+		return getPublicKey(token)
+	})
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 		return
