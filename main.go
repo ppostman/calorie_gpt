@@ -1,27 +1,29 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
-	"time"
-	"crypto/rsa"
-	"encoding/base64"
-	"math/big"
 	"sync"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"github.com/golang-jwt/jwt"
-	"github.com/google/uuid"
 )
 
 type DailyCalorieLimit struct {
@@ -33,7 +35,7 @@ type DailyCalorieLimit struct {
 }
 
 type NutritionEntry struct {
-	gorm.Model   `json:"-"`
+	gorm.Model  `json:"-"`
 	UserID      string  `json:"user_id" gorm:"not null"`
 	Date        string  `json:"date"`
 	Food        string  `json:"food"`
@@ -45,20 +47,20 @@ type NutritionEntry struct {
 }
 
 type CalorieCalculation struct {
-	Date               string  `json:"date"`
-	BaseCalories      float64 `json:"base_calories"`
-	WorkoutCalories   float64 `json:"workout_calories"`
-	ConsumedCalories  float64 `json:"consumed_calories"`
-	RemainingCalories float64 `json:"remaining_calories"`
+	Date              string           `json:"date"`
+	BaseCalories      float64          `json:"base_calories"`
+	WorkoutCalories   float64          `json:"workout_calories"`
+	ConsumedCalories  float64          `json:"consumed_calories"`
+	RemainingCalories float64          `json:"remaining_calories"`
 	Entries           []NutritionEntry `json:"entries"`
 }
 
 type Weight struct {
 	gorm.Model `json:"-"`
-	UserID string  `json:"user_id" gorm:"not null"`
-	Date   string  `json:"date" gorm:"not null"`
-	Weight float64 `json:"weight" gorm:"not null"`
-	Notes  string  `json:"notes"`
+	UserID     string  `json:"user_id" gorm:"not null"`
+	Date       string  `json:"date" gorm:"not null"`
+	Weight     float64 `json:"weight" gorm:"not null"`
+	Notes      string  `json:"notes"`
 }
 
 type OAuth2Config struct {
@@ -71,8 +73,8 @@ type OAuth2Config struct {
 }
 
 var (
-	db *gorm.DB
-	oauth2Config OAuth2Config
+	db            *gorm.DB
+	oauth2Config  OAuth2Config
 	jwksCache     = make(map[string]*rsa.PublicKey)
 	jwksCacheMu   sync.RWMutex
 	jwksCacheTime time.Time
@@ -108,7 +110,7 @@ func getDailyLimit(c *gin.Context) {
 	date := c.Param("date")
 	userID, _ := c.Get("userID")
 	var limit DailyCalorieLimit
-	
+
 	if err := db.Where("user_id = ? AND date = ?", userID, date).First(&limit).Error; err != nil {
 		// Return a default limit if none exists
 		limit = DailyCalorieLimit{
@@ -118,7 +120,7 @@ func getDailyLimit(c *gin.Context) {
 			WorkoutCalories: 0,
 		}
 	}
-	
+
 	c.JSON(200, limit)
 }
 
@@ -149,7 +151,7 @@ func getEntry(c *gin.Context) {
 	id := c.Param("id")
 	userID, _ := c.Get("userID")
 	var entry NutritionEntry
-	
+
 	if err := db.Where("user_id = ?", userID).First(&entry, id).Error; err != nil {
 		if err.Error() == "record not found" {
 			c.JSON(404, gin.H{"error": "Entry not found"})
@@ -158,7 +160,7 @@ func getEntry(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	c.JSON(200, entry)
 }
 
@@ -166,7 +168,7 @@ func getEntriesByDate(c *gin.Context) {
 	date := c.Param("date")
 	userID, _ := c.Get("userID")
 	var entries []NutritionEntry
-	
+
 	db.Where("user_id = ? AND date = ?", userID, date).Find(&entries)
 	c.JSON(200, entries)
 }
@@ -174,27 +176,27 @@ func getEntriesByDate(c *gin.Context) {
 func getDailyCalories(c *gin.Context) {
 	date := c.Param("date")
 	userID, _ := c.Get("userID")
-	
+
 	// Get daily limit
 	var limit DailyCalorieLimit
 	if err := db.Where("user_id = ? AND date = ?", userID, date).First(&limit).Error; err != nil {
 		c.JSON(404, gin.H{"error": "Daily limit not found for this date"})
 		return
 	}
-	
+
 	// Get all entries for the date
 	var entries []NutritionEntry
 	db.Where("user_id = ? AND date = ?", userID, date).Find(&entries)
-	
+
 	// Calculate total consumed calories
 	var consumedCalories float64
 	for _, entry := range entries {
 		consumedCalories += entry.Calories
 	}
-	
+
 	// Calculate remaining calories
 	remainingCalories := limit.BaseCalories + limit.WorkoutCalories - consumedCalories
-	
+
 	calculation := CalorieCalculation{
 		Date:              date,
 		BaseCalories:      limit.BaseCalories,
@@ -203,7 +205,7 @@ func getDailyCalories(c *gin.Context) {
 		RemainingCalories: remainingCalories,
 		Entries:           entries,
 	}
-	
+
 	c.JSON(200, calculation)
 }
 
@@ -211,7 +213,7 @@ func updateEntry(c *gin.Context) {
 	id := c.Param("id")
 	userID, _ := c.Get("userID")
 	var entry NutritionEntry
-	
+
 	if err := db.Where("user_id = ?", userID).First(&entry, id).Error; err != nil {
 		if err.Error() == "record not found" {
 			c.JSON(404, gin.H{"error": "Entry not found"})
@@ -220,18 +222,18 @@ func updateEntry(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	// Only allow updating the entry if it belongs to the user
 	if entry.UserID != userID.(string) {
 		c.JSON(403, gin.H{"error": "Not authorized to update this entry"})
 		return
 	}
-	
+
 	if err := c.ShouldBindJSON(&entry); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	entry.UserID = userID.(string) // Ensure UserID remains unchanged
 	db.Save(&entry)
 	c.JSON(200, entry)
@@ -241,7 +243,7 @@ func deleteEntry(c *gin.Context) {
 	id := c.Param("id")
 	userID, _ := c.Get("userID")
 	var entry NutritionEntry
-	
+
 	if err := db.Where("user_id = ?", userID).First(&entry, id).Error; err != nil {
 		if err.Error() == "record not found" {
 			c.JSON(404, gin.H{"error": "Entry not found"})
@@ -250,13 +252,13 @@ func deleteEntry(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	// Only allow deleting the entry if it belongs to the user
 	if entry.UserID != userID.(string) {
 		c.JSON(403, gin.H{"error": "Not authorized to delete this entry"})
 		return
 	}
-	
+
 	db.Delete(&entry)
 	c.JSON(200, gin.H{"message": "Entry deleted successfully"})
 }
@@ -649,11 +651,13 @@ func initDB() {
 		log.Fatal("Failed to connect to database:", err)
 	}
 
-	// Drop existing tables
-	db.Migrator().DropTable(&NutritionEntry{}, &DailyCalorieLimit{}, &Weight{})
+	// Auto migrate tables (this will create tables if they don't exist)
+	err = db.AutoMigrate(&NutritionEntry{}, &DailyCalorieLimit{}, &Weight{})
+	if err != nil {
+		log.Fatal("Failed to migrate database tables:", err)
+	}
 
-	// Create tables
-	db.AutoMigrate(&NutritionEntry{}, &DailyCalorieLimit{}, &Weight{})
+	log.Println("Database initialized successfully")
 }
 
 func initOAuth2Config() {
@@ -669,26 +673,71 @@ func initOAuth2Config() {
 
 func handleOAuth2Authorize(c *gin.Context) {
 	state := uuid.New().String()
-	authURL := fmt.Sprintf("%s?response_type=code&client_id=%s&redirect_uri=%s&scope=%s&state=%s",
-		oauth2Config.AuthURL,
-		oauth2Config.ClientID,
-		url.QueryEscape(oauth2Config.RedirectURI),
-		url.QueryEscape(strings.Join(oauth2Config.Scopes, " ")),
-		state,
-	)
-	c.JSON(http.StatusOK, gin.H{
-		"auth_url": authURL,
-		"state":    state,
-	})
+	redirectURI := c.Query("redirect_uri")
+	if redirectURI == "" {
+		redirectURI = "/"
+	}
+
+	// Store state and redirect_uri in cookies with secure settings
+	c.SetSameSite(http.SameSiteStrictMode)                                    // Add CSRF protection
+	c.SetCookie("oauth_state", state, 3600, "/", "", true, true)              // Secure + HttpOnly
+	c.SetCookie("oauth_redirect_uri", redirectURI, 3600, "/", "", true, true) // Secure + HttpOnly
+
+	// Build authorization URL with all necessary parameters
+	params := url.Values{}
+	params.Set("response_type", "code")
+	params.Set("client_id", oauth2Config.ClientID)
+	params.Set("redirect_uri", oauth2Config.RedirectURI)
+	params.Set("scope", strings.Join(oauth2Config.Scopes, " "))
+	params.Set("state", state)
+	params.Set("audience", "https://dev-lk0vcub54idn0l5c.us.auth0.com/api/v2/")
+
+	// Add PKCE for additional security
+	codeVerifier := generateCodeVerifier()
+	codeChallenge := generateCodeChallenge(codeVerifier)
+	c.SetCookie("code_verifier", codeVerifier, 3600, "/", "", true, true)
+	params.Set("code_challenge", codeChallenge)
+	params.Set("code_challenge_method", "S256")
+
+	authURL := oauth2Config.AuthURL + "?" + params.Encode()
+
+	// Redirect to Auth0 login page
+	c.Redirect(http.StatusTemporaryRedirect, authURL)
+}
+
+func generateCodeVerifier() string {
+	bytes := make([]byte, 32)
+	rand.Read(bytes)
+	return base64.RawURLEncoding.EncodeToString(bytes)
+}
+
+func generateCodeChallenge(verifier string) string {
+	hash := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(hash[:])
 }
 
 func handleOAuth2Callback(c *gin.Context) {
 	code := c.Query("code")
-	// state := c.Query("state")  // Commented out until we implement state verification
+	state := c.Query("state")
 
-	log.Printf("[OAuth2] Received code: %s", code)
+	// Verify state from cookie
+	storedState, _ := c.Cookie("oauth_state")
+	if state == "" || state != storedState {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid state parameter"})
+		return
+	}
 
-	// Exchange code for token
+	// Get stored redirect_uri
+	redirectURI, _ := c.Cookie("oauth_redirect_uri")
+	if redirectURI == "" {
+		redirectURI = "/"
+	}
+
+	// Clear the cookies with secure settings
+	c.SetCookie("oauth_state", "", -1, "/", "", true, true)        // Secure + HttpOnly
+	c.SetCookie("oauth_redirect_uri", "", -1, "/", "", true, true) // Secure + HttpOnly
+
+	// Exchange code for token with all necessary parameters
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("client_id", oauth2Config.ClientID)
@@ -696,84 +745,156 @@ func handleOAuth2Callback(c *gin.Context) {
 	data.Set("code", code)
 	data.Set("redirect_uri", oauth2Config.RedirectURI)
 
-	log.Printf("[OAuth2] Token request data: %+v", data)
+	// Get the code verifier from cookie
+	codeVerifier, err := c.Cookie("code_verifier")
+	if err != nil || codeVerifier == "" {
+		log.Printf("[OAuth2] Missing code verifier")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing code verifier"})
+		return
+	}
+	data.Set("code_verifier", codeVerifier)
 
-	resp, err := http.PostForm(oauth2Config.TokenURL, data)
+	// Clear code verifier cookie
+	c.SetCookie("code_verifier", "", -1, "/", "", true, true)
+
+	// Create token request
+	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
-		log.Printf("[OAuth2] Token request failed: %v", err)
+		log.Printf("[OAuth2] Failed to create token request") // Don't log error details
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create token request"})
+		return
+	}
+
+	// Set proper headers
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	tokenReq.Header.Set("Accept", "application/json")
+
+	// Make the request
+	client := &http.Client{Timeout: 10 * time.Second} // Add timeout
+	resp, err := client.Do(tokenReq)
+	if err != nil {
+		log.Printf("[OAuth2] Token request failed") // Don't log error details
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to exchange code for token"})
 		return
 	}
 	defer resp.Body.Close()
 
-	// Read and log raw response
+	// Read response
 	rawBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("[OAuth2] Failed to read response body: %v", err)
+		log.Printf("[OAuth2] Failed to read response body") // Don't log error details
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read token response"})
 		return
 	}
+
+	// Log raw token response for debugging
 	log.Printf("[OAuth2] Raw token response: %s", string(rawBody))
 
 	// Parse response
 	var tokenResponse struct {
 		AccessToken  string `json:"access_token"`
-		TokenType   string `json:"token_type"`
-		IDToken     string `json:"id_token"`
-		ExpiresIn   int    `json:"expires_in"`
-		Scope       string `json:"scope"`
+		TokenType    string `json:"token_type"`
+		IDToken      string `json:"id_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		Scope        string `json:"scope"`
 		RefreshToken string `json:"refresh_token"`
 	}
 
 	if err := json.Unmarshal(rawBody, &tokenResponse); err != nil {
-		log.Printf("[OAuth2] Failed to parse token response: %v", err)
+		log.Printf("[OAuth2] Failed to parse token response") // Don't log error details
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse token response"})
 		return
 	}
 
-	// Log parsed response (without sensitive data)
-	log.Printf("[OAuth2] Parsed token response: TokenType=%s, ExpiresIn=%d, Scope=%s", 
-		tokenResponse.TokenType, tokenResponse.ExpiresIn, tokenResponse.Scope)
+	// Validate that we received an ID token
+	if tokenResponse.IDToken == "" {
+		log.Printf("[OAuth2] No ID token received in response")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No ID token received from Auth0"})
+		return
+	}
 
-	c.JSON(http.StatusOK, tokenResponse)
+	// Add tokens to the redirect URL
+	redirectURL := redirectURI
+	if strings.Contains(redirectURL, "?") {
+		redirectURL += "&"
+	} else {
+		redirectURL += "?"
+	}
+
+	// Include both access token and ID token
+	redirectURL += fmt.Sprintf("access_token=%s&id_token=%s&token_type=Bearer&expires_in=%d",
+		url.QueryEscape(tokenResponse.AccessToken),
+		url.QueryEscape(tokenResponse.IDToken),
+		tokenResponse.ExpiresIn)
+
+	// Add SameSite cookie attribute for CSRF protection
+	c.SetSameSite(http.SameSiteStrictMode)
+
+	// Redirect to the original redirect_uri with tokens
+	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
 }
 
 func handleUserInfo(c *gin.Context) {
+	// Get token from Authorization header
 	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "No authorization header"})
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Missing or invalid Authorization header"})
 		return
 	}
+	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 
-	// Extract token
-	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 || parts[0] != "Bearer" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header"})
-		return
-	}
-
-	// Verify token and get claims
-	token, err := jwt.Parse(parts[1], func(token *jwt.Token) (interface{}, error) {
+	// Parse and validate the token
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		// Log token details for debugging
+		log.Printf("[UserInfo] Token Headers: %+v", token.Header)
+		
 		return getPublicKey(token)
 	})
+
 	if err != nil {
+		log.Printf("[UserInfo] Token parsing error: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 		return
 	}
 
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user info"})
+	if !token.Valid {
+		log.Printf("[UserInfo] Token is invalid")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 		return
 	}
 
-	// Return user info from token claims
-	c.JSON(http.StatusOK, gin.H{
-		"sub": claims["sub"],
-		"email": claims["email"],
-		"name": claims["name"],
-		"picture": claims["picture"],
-	})
+	// Get claims from token
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		log.Printf("[UserInfo] Failed to get claims from token")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user info from token"})
+		return
+	}
+
+	// Log raw claims for debugging
+	log.Printf("[UserInfo] Raw token claims: %+v", claims)
+
+	// Return user info from token claims, with more flexible field access
+	response := gin.H{
+		"sub":     claims["sub"],
+		"email":   getClaimString(claims, "email", ""),
+		"name":    getClaimString(claims, "name", ""),
+		"picture": getClaimString(claims, "picture", ""),
+	}
+
+	// Log the response we're sending back
+	log.Printf("[UserInfo] Sending response: %+v", response)
+
+	c.JSON(http.StatusOK, response)
+}
+
+func getClaimString(claims jwt.MapClaims, key string, defaultValue string) string {
+	if value, exists := claims[key]; exists {
+		if str, ok := value.(string); ok {
+			return str
+		}
+	}
+	return defaultValue
 }
 
 func main() {
@@ -788,7 +909,7 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(requestLogger())
-	
+
 	// Configure CORS
 	config := cors.DefaultConfig()
 	config.AllowOrigins = []string{"http://localhost:8080"}

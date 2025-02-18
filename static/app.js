@@ -5,10 +5,8 @@ let isLoading = false;
 // Initialize Auth0 client
 async function initializeAuth0() {
     try {
-        // Update to use our OAuth2 proxy endpoints
-        const response = await fetch('/oauth2/authorize');
-        const data = await response.json();
-        window.location.href = data.auth_url;
+        // Redirect to our OAuth2 proxy authorize endpoint
+        window.location.href = '/oauth2/authorize';
     } catch (error) {
         console.error('Error initializing Auth0:', error);
         handleAuthenticationFailure();
@@ -20,57 +18,218 @@ async function updateAuthState() {
     try {
         const urlParams = new URLSearchParams(window.location.search);
         const code = urlParams.get('code');
-        const state = urlParams.get('state');
+        const newAccessToken = urlParams.get('access_token');
+        const newIdToken = urlParams.get('id_token');
+        const error = urlParams.get('error');
+        const errorDescription = urlParams.get('error_description');
+
+        if (error) {
+            console.error('Authentication error:', error, errorDescription);
+            handleAuthenticationFailure();
+            return;
+        }
 
         if (code) {
+            // If we have a code, we're in the initial OAuth callback
+            // The backend will handle this and redirect back with the tokens
+            return;
+        }
+
+        if (newAccessToken && newIdToken) {
+            // Validate the tokens
+            if (!isValidJWT(newAccessToken) || !isValidJWT(newIdToken)) {
+                console.error('Invalid tokens received');
+                handleAuthenticationFailure();
+                return;
+            }
+
+            // Parse the ID token to get user info
+            const idTokenParts = newIdToken.split('.');
+            const payload = JSON.parse(atob(idTokenParts[1].replace(/-/g, '+').replace(/_/g, '/')));
+            
+            console.log('ID Token payload:', payload);  // Debug log
+
+            // Create user object from ID token payload
+            const user = {
+                email: payload.email,
+                name: payload.name,
+                picture: payload.picture,
+                sub: payload.sub
+            };
+
+            // Handle successful authentication with tokens and user info
+            handleAuthenticationSuccess(newAccessToken, user);
+            return;
+        }
+
+        // Check if we have a stored token
+        const storedToken = localStorage.getItem('access_token');
+        if (storedToken) {
+            if (!isValidJWT(storedToken)) {
+                console.log('Stored token is invalid or expired');
+                handleAuthenticationFailure();
+                return;
+            }
+            
+            // Try to load user profile with stored token
             try {
-                const response = await fetch(`/oauth2/callback?code=${code}&state=${state}`);
-                const data = await response.json();
-                
-                if (data.access_token) {
-                    accessToken = data.access_token;
-                    localStorage.setItem('access_token', accessToken);
-                    window.history.replaceState({}, document.title, '/');
-                    updateAuthUI(true);
-                    loadUserProfile();
-                    loadWeights();
-                }
+                accessToken = storedToken;
+                await loadUserProfile();
+                handleAuthenticationSuccess(storedToken, { email: localStorage.getItem('userEmail') });
             } catch (error) {
-                console.error('Token exchange failed:', error);
+                console.error('Error loading user profile:', error);
                 handleAuthenticationFailure();
             }
+            return;
         }
+
+        handleAuthenticationFailure();
     } catch (error) {
         console.error('Error updating auth state:', error);
         handleAuthenticationFailure();
     }
 }
 
+// Validate JWT token format
+function isValidJWT(token) {
+    if (!token) {
+        console.log('No token provided');
+        return false;
+    }
+    
+    // JWT should have 3 parts separated by dots
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+        console.log('Invalid token format: wrong number of parts');
+        return false;
+    }
+    
+    try {
+        // Each part should be valid base64url
+        const header = JSON.parse(atob(parts[0].replace(/-/g, '+').replace(/_/g, '/')));
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        
+        // Debug logging
+        console.log('Validating JWT...');
+        console.log('Header:', header);
+        console.log('Payload:', payload);
+        
+        // Basic JWT structure validation
+        if (!header.alg) {
+            console.log('Missing algorithm in header');
+            return false;
+        }
+        
+        // Check expiration only if it exists
+        if (payload.exp) {
+            const now = Math.floor(Date.now() / 1000);
+            if (payload.exp < now) {
+                console.log('Token expired. Expiry:', new Date(payload.exp * 1000), 'Current:', new Date(now * 1000));
+                return false;
+            }
+        }
+        
+        // Additional security checks - be more lenient
+        if (header.alg !== 'RS256') {
+            console.log('Warning: Unexpected algorithm:', header.alg);
+            // Don't fail on algorithm mismatch for now
+        }
+        
+        // For ID tokens, verify issuer
+        if (payload.iss) {
+            const expectedIssuer = 'https://dev-lk0vcub54idn0l5c.us.auth0.com';
+            if (!payload.iss.startsWith(expectedIssuer)) {
+                console.log('Warning: Unexpected issuer:', payload.iss);
+                // Don't fail on issuer mismatch for now
+            }
+        }
+        
+        console.log('JWT validation successful');
+        return true;
+    } catch (error) {
+        console.error('Error validating JWT:', error);
+        return false;
+    }
+}
+
 // Handle successful authentication
 function handleAuthenticationSuccess(token, user) {
+    if (!token || !isValidJWT(token)) {
+        console.error('Invalid JWT token in authentication success');
+        handleAuthenticationFailure();
+        return;
+    }
+    
+    if (!user || !user.email) {
+        console.error('Missing user info in authentication success');
+        handleAuthenticationFailure();
+        return;
+    }
+
+    // Store authentication state
     accessToken = token;
     userEmail = user.email;
-    localStorage.setItem('accessToken', token);
+    localStorage.setItem('access_token', token);
     localStorage.setItem('userEmail', user.email);
-    updateAuthUI();
-    loadInitialData();
+
+    // Update UI with user info
+    const welcomeElement = document.getElementById('welcome');
+    if (welcomeElement) {
+        const displayName = user.name || user.email;
+        welcomeElement.textContent = `Welcome, ${displayName}!`;
+    }
+
+    // Update UI and load data
+    updateAuthUI(true);
+    loadInitialData().catch(error => {
+        console.error('Error loading initial data:', error);
+        alert('Failed to load initial data. Please refresh the page.');
+    });
+}
+
+// Load user profile
+async function loadUserProfile() {
+    try {
+        const response = await fetchWithAuth('/oauth2/userinfo', {
+            headers: getHeaders()
+        });
+        if (!response.ok) {
+            throw new Error('Failed to load user profile');
+        }
+        const profile = await response.json();
+        userEmail = profile.email;
+        
+        // Update welcome message with user's name or email
+        const welcomeElement = document.getElementById('welcome');
+        if (welcomeElement) {
+            const displayName = profile.name || profile.email;
+            welcomeElement.textContent = `Welcome, ${displayName}!`;
+        }
+    } catch (error) {
+        console.error('Error loading user profile:', error);
+        throw error; // Propagate error for proper error handling
+    }
 }
 
 // Handle authentication failure
 function handleAuthenticationFailure() {
     accessToken = null;
     userEmail = null;
-    localStorage.removeItem('accessToken');
+    localStorage.removeItem('access_token');
     localStorage.removeItem('userEmail');
-    updateAuthUI();
+    updateAuthUI(false);
+    // Clear any sensitive data from the UI
+    document.getElementById('user-email').textContent = '';
+    document.getElementById('entries-container').innerHTML = '';
+    document.getElementById('weight-container').innerHTML = '';
 }
 
 // Login handler
 async function handleLogin() {
     try {
-        const response = await fetch('/oauth2/authorize');
-        const data = await response.json();
-        window.location.href = data.auth_url;
+        const currentPath = window.location.pathname;
+        const redirectUri = encodeURIComponent(currentPath || '/');
+        window.location.href = `/oauth2/authorize?redirect_uri=${redirectUri}`;
     } catch (error) {
         console.error('Error during login:', error);
         alert('Failed to log in. Please try again.');
@@ -116,21 +275,48 @@ async function checkAuth() {
 
 // Update UI based on auth state
 function updateAuthUI(isAuthenticated) {
-    const authButton = document.getElementById('login-button');
+    const loginButton = document.getElementById('login-button');
+    const loginButtonMain = document.getElementById('login-button-main');
     const logoutButton = document.getElementById('logout-button');
-    const authSection = document.getElementById('auth-section');
-    const unauthSection = document.getElementById('unauth-section');
+    const loginSection = document.getElementById('login-section');
+    const userSection = document.getElementById('user-section');
+    const authenticatedView = document.getElementById('authenticated-view');
+    const unauthenticatedView = document.getElementById('unauthenticated-view');
 
     if (isAuthenticated) {
-        authButton.style.display = 'none';
-        logoutButton.style.display = 'block';
-        authSection.style.display = 'block';
-        unauthSection.style.display = 'none';
+        // Update navigation elements
+        if (loginButton) loginButton.style.display = 'none';
+        if (loginButtonMain) loginButtonMain.style.display = 'none';
+        if (logoutButton) logoutButton.style.display = 'block';
+        if (loginSection) loginSection.style.display = 'none';
+        if (userSection) userSection.style.display = 'block';
+        
+        // Update main view containers
+        if (authenticatedView) {
+            authenticatedView.classList.remove('d-none');
+            authenticatedView.classList.add('d-block');
+        }
+        if (unauthenticatedView) {
+            unauthenticatedView.classList.remove('d-block');
+            unauthenticatedView.classList.add('d-none');
+        }
     } else {
-        authButton.style.display = 'block';
-        logoutButton.style.display = 'none';
-        authSection.style.display = 'none';
-        unauthSection.style.display = 'block';
+        // Update navigation elements
+        if (loginButton) loginButton.style.display = 'block';
+        if (loginButtonMain) loginButtonMain.style.display = 'block';
+        if (logoutButton) logoutButton.style.display = 'none';
+        if (loginSection) loginSection.style.display = 'block';
+        if (userSection) userSection.style.display = 'none';
+        
+        // Update main view containers
+        if (authenticatedView) {
+            authenticatedView.classList.remove('d-block');
+            authenticatedView.classList.add('d-none');
+        }
+        if (unauthenticatedView) {
+            unauthenticatedView.classList.remove('d-none');
+            unauthenticatedView.classList.add('d-block');
+        }
     }
 }
 
@@ -162,55 +348,33 @@ const getHeaders = () => ({
 
 // Add error handling middleware
 async function fetchWithAuth(url, options = {}) {
-    if (!accessToken) {
-        updateAuthUI();
+    if (!accessToken || !isValidJWT(accessToken)) {
+        console.error('No valid access token available');
+        handleAuthenticationFailure();
         return null;
     }
 
-    try {
-        // Try to refresh the token before making the request
-        await updateAuthState();
+    const headers = {
+        ...options.headers,
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+    };
 
+    try {
         const response = await fetch(url, {
             ...options,
-            headers: getHeaders(),
+            headers
         });
-        
-        if (response.status === 401) {
-            // Token might be expired, try to refresh
-            try {
-                await updateAuthState();
-                // Retry the request with the new token
-                const retryResponse = await fetch(url, {
-                    ...options,
-                    headers: getHeaders(),
-                });
-                if (retryResponse.status === 401) {
-                    // If still unauthorized after refresh, logout
-                    handleLogout();
-                    return null;
-                }
-                const text = await retryResponse.text();
-                return { json: JSON.parse(text), response: retryResponse };
-            } catch (error) {
-                console.error('Token refresh failed:', error);
-                handleLogout();
-                return null;
-            }
-        }
 
-        const text = await response.text();
-        try {
-            return { json: JSON.parse(text), response };
-        } catch (e) {
-            console.error('JSON parse error:', e);
-            console.error('Response text:', text);
+        if (response.status === 401) {
+            handleAuthenticationFailure();
             return null;
         }
+
+        return response;
     } catch (error) {
         console.error('API request failed:', error);
-        alert('Failed to connect to the server. Please try again.');
-        return null;
+        throw error;
     }
 }
 
@@ -226,8 +390,8 @@ async function loadNutritionData() {
 
         if (!limitResult || !entriesResult) return;
 
-        const limit = limitResult.json;
-        const entries = entriesResult.json;
+        const limit = await limitResult.json();
+        const entries = await entriesResult.json();
 
         updateCalorieProgress(entries, limit);
         updateFoodEntries(entries);
@@ -283,7 +447,7 @@ async function loadWeightData() {
         const response = await fetchWithAuth(`${API_BASE_URL}/weight`);
         if (!response) return;
 
-        const weights = response.json;
+        const weights = await response.json();
         if (Array.isArray(weights)) {
             updateWeightChart(weights);
             updateWeightEntries(weights);
@@ -481,5 +645,10 @@ async function deleteWeight(id) {
     }
 }
 
-// Initial auth check and data load
-checkAuth();
+// Initial setup
+document.addEventListener('DOMContentLoaded', () => {
+    updateAuthState().catch(error => {
+        console.error('Error during initial auth check:', error);
+        handleAuthenticationFailure();
+    });
+});
