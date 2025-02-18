@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -685,6 +686,8 @@ func handleOAuth2Callback(c *gin.Context) {
 	code := c.Query("code")
 	// state := c.Query("state")  // Commented out until we implement state verification
 
+	log.Printf("[OAuth2] Received code: %s", code)
+
 	// Exchange code for token
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
@@ -693,13 +696,26 @@ func handleOAuth2Callback(c *gin.Context) {
 	data.Set("code", code)
 	data.Set("redirect_uri", oauth2Config.RedirectURI)
 
+	log.Printf("[OAuth2] Token request data: %+v", data)
+
 	resp, err := http.PostForm(oauth2Config.TokenURL, data)
 	if err != nil {
+		log.Printf("[OAuth2] Token request failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to exchange code for token"})
 		return
 	}
 	defer resp.Body.Close()
 
+	// Read and log raw response
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("[OAuth2] Failed to read response body: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read token response"})
+		return
+	}
+	log.Printf("[OAuth2] Raw token response: %s", string(rawBody))
+
+	// Parse response
 	var tokenResponse struct {
 		AccessToken  string `json:"access_token"`
 		TokenType   string `json:"token_type"`
@@ -709,10 +725,15 @@ func handleOAuth2Callback(c *gin.Context) {
 		RefreshToken string `json:"refresh_token"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResponse); err != nil {
+	if err := json.Unmarshal(rawBody, &tokenResponse); err != nil {
+		log.Printf("[OAuth2] Failed to parse token response: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse token response"})
 		return
 	}
+
+	// Log parsed response (without sensitive data)
+	log.Printf("[OAuth2] Parsed token response: TokenType=%s, ExpiresIn=%d, Scope=%s", 
+		tokenResponse.TokenType, tokenResponse.ExpiresIn, tokenResponse.Scope)
 
 	c.JSON(http.StatusOK, tokenResponse)
 }
