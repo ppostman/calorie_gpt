@@ -919,6 +919,8 @@ func main() {
 		"https://chat.openai.com/",
 		"https://chatgpt.com",
 		"https://chatgpt.com/",
+		"https://calorie-gpt.onrender.com",
+		"https://calorie-gpt.onrender.com/",
 	}
 	config.AllowCredentials = true
 	config.AllowHeaders = []string{
