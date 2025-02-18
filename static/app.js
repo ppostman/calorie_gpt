@@ -5,24 +5,10 @@ let isLoading = false;
 // Initialize Auth0 client
 async function initializeAuth0() {
     try {
-        auth0Client = await auth0.createAuth0Client(auth0Config);
-        
-        // Check for the code and state parameters
-        const query = window.location.search;
-        if (query.includes("code=") && query.includes("state=")) {
-            // Handle the redirect and retrieve tokens
-            await auth0Client.handleRedirectCallback();
-            // Clean up URL
-            window.history.replaceState({}, document.title, window.location.pathname);
-        }
-
-        // Check if user is authenticated
-        const isAuthenticated = await auth0Client.isAuthenticated();
-        if (isAuthenticated) {
-            await updateAuthState();
-        } else {
-            handleAuthenticationFailure();
-        }
+        // Update to use our OAuth2 proxy endpoints
+        const response = await fetch('/oauth2/authorize');
+        const data = await response.json();
+        window.location.href = data.auth_url;
     } catch (error) {
         console.error('Error initializing Auth0:', error);
         handleAuthenticationFailure();
@@ -32,17 +18,31 @@ async function initializeAuth0() {
 // Update authentication state
 async function updateAuthState() {
     try {
-        const user = await auth0Client.getUser();
-        const token = await auth0Client.getTokenSilently({
-            timeoutInSeconds: 60,
-            cacheMode: 'on'
-        });
-        handleAuthenticationSuccess(token, user);
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        const state = urlParams.get('state');
+
+        if (code) {
+            try {
+                const response = await fetch(`/oauth2/callback?code=${code}&state=${state}`);
+                const data = await response.json();
+                
+                if (data.access_token) {
+                    accessToken = data.access_token;
+                    localStorage.setItem('access_token', accessToken);
+                    window.history.replaceState({}, document.title, '/');
+                    updateAuthUI(true);
+                    loadUserProfile();
+                    loadWeights();
+                }
+            } catch (error) {
+                console.error('Token exchange failed:', error);
+                handleAuthenticationFailure();
+            }
+        }
     } catch (error) {
         console.error('Error updating auth state:', error);
-        if (error.error === 'login_required') {
-            handleAuthenticationFailure();
-        }
+        handleAuthenticationFailure();
     }
 }
 
@@ -68,12 +68,9 @@ function handleAuthenticationFailure() {
 // Login handler
 async function handleLogin() {
     try {
-        await auth0Client.loginWithRedirect({
-            authorizationParams: {
-                redirect_uri: window.location.origin,
-                scope: 'openid profile email offline_access'
-            }
-        });
+        const response = await fetch('/oauth2/authorize');
+        const data = await response.json();
+        window.location.href = data.auth_url;
     } catch (error) {
         console.error('Error during login:', error);
         alert('Failed to log in. Please try again.');
@@ -83,12 +80,11 @@ async function handleLogin() {
 // Logout handler
 async function handleLogout() {
     try {
-        await auth0Client.logout({
-            logoutParams: {
-                returnTo: window.location.origin
-            }
-        });
-        handleAuthenticationFailure();
+        accessToken = null;
+        localStorage.removeItem('access_token');
+        updateAuthUI(false);
+        document.getElementById('welcome').textContent = '';
+        document.getElementById('weights').innerHTML = '';
     } catch (error) {
         console.error('Error during logout:', error);
         alert('Failed to log out. Please try again.');
@@ -101,22 +97,40 @@ let userEmail = null;
 
 // Check if we have a token in local storage
 async function checkAuth() {
-    // Auth0 will handle the token validation and renewal
-    await initializeAuth0();
+    // Update to use our OAuth2 proxy endpoints
+    const storedToken = localStorage.getItem('access_token');
+    if (storedToken) {
+        accessToken = storedToken;
+        updateAuthUI(true);
+        loadUserProfile();
+        loadWeights();
+    } else {
+        updateAuthUI(false);
+    }
+
+    // Check if we're handling a callback
+    if (window.location.search.includes('code=')) {
+        handleCallback();
+    }
 }
 
 // Update UI based on auth state
-function updateAuthUI() {
-    const isAuthenticated = !!accessToken;
-    
-    // Update visibility of auth sections
-    document.getElementById('login-section').classList.toggle('d-none', isAuthenticated);
-    document.getElementById('user-section').classList.toggle('d-none', !isAuthenticated);
-    document.getElementById('authenticated-view').classList.toggle('d-none', !isAuthenticated);
-    document.getElementById('unauthenticated-view').classList.toggle('d-none', isAuthenticated);
-    
+function updateAuthUI(isAuthenticated) {
+    const authButton = document.getElementById('login-button');
+    const logoutButton = document.getElementById('logout-button');
+    const authSection = document.getElementById('auth-section');
+    const unauthSection = document.getElementById('unauth-section');
+
     if (isAuthenticated) {
-        document.getElementById('user-email').textContent = userEmail;
+        authButton.style.display = 'none';
+        logoutButton.style.display = 'block';
+        authSection.style.display = 'block';
+        unauthSection.style.display = 'none';
+    } else {
+        authButton.style.display = 'block';
+        logoutButton.style.display = 'none';
+        authSection.style.display = 'none';
+        unauthSection.style.display = 'block';
     }
 }
 
