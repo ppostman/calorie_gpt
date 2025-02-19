@@ -242,6 +242,18 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.auth0.com/js/auth0-spa-js/2.0/auth0-spa-js.production.js"></script>
     <script src="/static/auth0-config.js"></script>
+    <script>
+        // Wait for Auth0 SDK and config to load
+        window.addEventListener('load', () => {
+            if (!window.auth0 || !window.AUTH0_CONFIG) {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'alert alert-danger';
+                errorDiv.textContent = 'Failed to load authentication. Please refresh the page.';
+                document.body.insertBefore(errorDiv, document.body.firstChild);
+                return;
+            }
+        });
+    </script>
     <script src="/static/app.js"></script>
 </body>
 </html>

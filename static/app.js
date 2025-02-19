@@ -6,67 +6,85 @@ let userProfile = null;
 
 // Initialize Auth0 client
 async function initializeAuth0() {
-    auth0 = await createAuth0Client({
-        domain: AUTH0_DOMAIN,
-        client_id: AUTH0_CLIENT_ID,
-        audience: AUTH0_AUDIENCE,
-        redirect_uri: window.location.origin
-    });
-
     try {
+        auth0 = await window.auth0.createAuth0Client(window.AUTH0_CONFIG);
+
         // Check for authentication callback
-        if (window.location.search.includes("code=")) {
+        if (window.location.search.includes("code=") || 
+            window.location.search.includes("error=")) {
             await auth0.handleRedirectCallback();
             window.history.replaceState({}, document.title, window.location.pathname);
         }
+
+        isAuthenticated = await auth0.isAuthenticated();
+        await updateUI();
+
+        if (isAuthenticated) {
+            accessToken = await auth0.getTokenSilently();
+            userProfile = await auth0.getUser();
+            await loadInitialData();
+        }
     } catch (err) {
-        console.error("Error handling redirect:", err);
-    }
-
-    isAuthenticated = await auth0.isAuthenticated();
-    updateUI();
-
-    if (isAuthenticated) {
-        accessToken = await auth0.getTokenSilently();
-        userProfile = await auth0.getUser();
-        await loadInitialData();
+        console.error("Error initializing Auth0:", err);
+        showError("Failed to initialize authentication. Please try again later.");
     }
 }
 
 // Update UI based on authentication state
 async function updateUI() {
-    const isAuthenticated = await auth0.isAuthenticated();
-    
-    document.getElementById("authenticated-view").classList.toggle("d-none", !isAuthenticated);
-    document.getElementById("unauthenticated-view").classList.toggle("d-none", isAuthenticated);
-    document.getElementById("login-section").classList.toggle("d-none", isAuthenticated);
-    document.getElementById("user-section").classList.toggle("d-none", !isAuthenticated);
+    try {
+        const authenticated = await auth0.isAuthenticated();
+        
+        document.getElementById("authenticated-view").classList.toggle("d-none", !authenticated);
+        document.getElementById("unauthenticated-view").classList.toggle("d-none", authenticated);
+        document.getElementById("login-section").classList.toggle("d-none", authenticated);
+        document.getElementById("user-section").classList.toggle("d-none", !authenticated);
 
-    if (isAuthenticated && userProfile) {
-        document.getElementById("welcome").textContent = `Welcome, ${userProfile.name}!`;
+        if (authenticated && userProfile) {
+            document.getElementById("welcome").textContent = `Welcome, ${userProfile.name || userProfile.email}!`;
+        }
+    } catch (err) {
+        console.error("Error updating UI:", err);
     }
+}
+
+// Show error message to user
+function showError(message) {
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'alert alert-danger alert-dismissible fade show';
+    errorDiv.role = 'alert';
+    errorDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+    document.body.insertBefore(errorDiv, document.body.firstChild);
 }
 
 // Login
 async function login() {
     try {
-        await auth0.loginWithRedirect({
-            redirect_uri: window.location.origin,
-            scope: 'openid profile email offline_access'
-        });
+        if (!auth0) {
+            throw new Error('Auth0 client not initialized');
+        }
+        await auth0.loginWithRedirect();
     } catch (err) {
         console.error("Error during login:", err);
+        showError("Failed to start login process. Please try again.");
     }
 }
 
 // Logout
 async function logout() {
     try {
+        if (!auth0) {
+            throw new Error('Auth0 client not initialized');
+        }
         await auth0.logout({
             returnTo: window.location.origin
         });
     } catch (err) {
         console.error("Error during logout:", err);
+        showError("Failed to logout. Please try again.");
     }
 }
 
