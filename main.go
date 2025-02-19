@@ -1078,6 +1078,7 @@ func handleTokenExchange(c *gin.Context) {
 	data.Set("code", tokenRequest.Code)
 	data.Set("redirect_uri", tokenRequest.RedirectURI)
 	data.Set("client_id", clientID)
+	data.Set("audience", "https://dev-lk0vcub54idn0l5c.us.auth0.com/api/v2/")
 
 	// Add client secret if provided
 	if tokenRequest.ClientSecret != "" {
