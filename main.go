@@ -962,6 +962,133 @@ func generateCodeChallenge(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(hash[:])
 }
 
+func handleTokenExchange(c *gin.Context) {
+	// Log raw request body
+	rawBody, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		log.Printf("[OAuth2] Failed to read request body: %v", err)
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid_request",
+			"error_description": "Failed to read request body",
+		})
+		return
+	}
+	log.Printf("[OAuth2] Token request body: %s", string(rawBody))
+	
+	// Restore the body for binding
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(rawBody))
+
+	var tokenRequest struct {
+		Code         string `json:"code" binding:"required"`
+		RedirectURI  string `json:"redirect_uri" binding:"required"`
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+		GrantType    string `json:"grant_type" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&tokenRequest); err != nil {
+		log.Printf("[OAuth2] Invalid token request: %v", err)
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid_request",
+			"error_description": "Invalid request parameters",
+		})
+		return
+	}
+
+	// Validate grant type
+	if tokenRequest.GrantType != "authorization_code" {
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "unsupported_grant_type",
+			"error_description": "Only authorization_code grant type is supported",
+		})
+		return
+	}
+
+	// Use provided client ID or fall back to config
+	clientID := tokenRequest.ClientID
+	if clientID == "" {
+		clientID = oauth2Config.ClientID
+	}
+
+	// Build token request
+	data := url.Values{}
+	data.Set("grant_type", "authorization_code")
+	data.Set("code", tokenRequest.Code)
+	data.Set("redirect_uri", tokenRequest.RedirectURI)
+	data.Set("client_id", clientID)
+
+	// Add client secret if provided
+	if tokenRequest.ClientSecret != "" {
+		data.Set("client_secret", tokenRequest.ClientSecret)
+	}
+
+	// Create token request
+	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		log.Printf("[OAuth2] Failed to create token request")
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "server_error",
+			"error_description": "Failed to create token request",
+		})
+		return
+	}
+
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	// Send token request
+	client := &http.Client{Timeout: 10 * time.Second} // Add timeout
+	resp, err := client.Do(tokenReq)
+	if err != nil {
+		log.Printf("[OAuth2] Token request failed")
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "server_error",
+			"error_description": "Failed to exchange code for token",
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	rawBody, err = io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("[OAuth2] Failed to read response body")
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "server_error",
+			"error_description": "Failed to read token response",
+		})
+		return
+	}
+
+	// Check if Auth0 returned an error
+	if resp.StatusCode != http.StatusOK {
+		var errorResponse struct {
+			Error            string `json:"error"`
+			ErrorDescription string `json:"error_description"`
+		}
+		if err := json.Unmarshal(rawBody, &errorResponse); err != nil {
+			c.Header("Content-Type", "application/json")
+			c.JSON(resp.StatusCode, gin.H{
+				"error": "server_error",
+				"error_description": "Failed to parse error response from Auth0",
+			})
+			return
+		}
+		c.Header("Content-Type", "application/json")
+		c.JSON(resp.StatusCode, errorResponse)
+		return
+	}
+
+	// Forward Auth0's response
+	c.Header("Content-Type", "application/json")
+	c.Data(http.StatusOK, "application/json", rawBody)
+}
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -1009,6 +1136,7 @@ func main() {
 	{
 		oauth.GET("/authorize", handleOAuth2Authorize)
 		oauth.GET("/callback", handleOAuth2Callback)
+		oauth.POST("/token", handleTokenExchange)
 		oauth.GET("/userinfo", handleUserInfo)
 	}
 
