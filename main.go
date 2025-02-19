@@ -1134,6 +1134,11 @@ func handleTokenExchange(c *gin.Context) {
 		return
 	}
 
+	// Log Auth0's raw response
+	log.Printf("[OAuth2] Auth0 response status: %d", resp.StatusCode)
+	log.Printf("[OAuth2] Auth0 response headers: %+v", resp.Header)
+	log.Printf("[OAuth2] Auth0 response body: %s", string(rawBody))
+
 	// Check if Auth0 returned an error
 	if resp.StatusCode != http.StatusOK {
 		var errorResponse struct {
