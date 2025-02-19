@@ -727,14 +727,25 @@ func generateNonce() string {
 }
 
 func handleOAuth2Authorize(c *gin.Context) {
-	// Generate state and nonce
-	state := uuid.New().String()
+	// Check if state was provided in request
+	state := c.Query("state")
+	if state == "" {
+		state = uuid.New().String()
+		log.Printf("[OAuth2] Generated new state: %s", state)
+	} else {
+		log.Printf("[OAuth2] Using provided state: %s", state)
+	}
+
+	// Generate nonce
 	nonce := generateNonce()
 
 	// Store state and nonce in secure cookies
 	domain := c.Request.Host
 	if strings.Contains(domain, ":") {
 		domain = strings.Split(domain, ":")[0]
+	}
+	if domain == "localhost" {
+		domain = ""
 	}
 	c.SetSameSite(http.SameSiteLaxMode)
 	c.SetCookie("oauth_state", state, 3600, "/", domain, true, true)
