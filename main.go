@@ -58,8 +58,8 @@ type CalorieCalculation struct {
 type Weight struct {
 	gorm.Model
 	UserID string    `json:"user_id" gorm:"index;not null"`
-	Date   time.Time `json:"date"`
-	Value  float64   `json:"value"`
+	Date   time.Time `json:"date" gorm:"not null"`
+	Value  float64   `json:"value" gorm:"not null" binding:"required"`
 	Notes  string    `json:"notes"`
 }
 
@@ -372,8 +372,19 @@ func createWeight(c *gin.Context) {
 
 	var weight Weight
 	if err := c.ShouldBindJSON(&weight); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid weight data. Value is required."})
 		return
+	}
+
+	// Validate weight value
+	if weight.Value <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Weight value must be greater than 0"})
+		return
+	}
+
+	// Set current time if not provided
+	if weight.Date.IsZero() {
+		weight.Date = time.Now()
 	}
 
 	weight.UserID = userID

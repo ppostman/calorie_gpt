@@ -247,19 +247,42 @@ document.getElementById('food-form').addEventListener('submit', async (e) => {
 
 document.getElementById('weight-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const weightValue = parseFloat(document.getElementById('weight-value').value);
+    
+    if (!weightValue || weightValue <= 0) {
+        showError("Please enter a valid weight value greater than 0");
+        return;
+    }
+
     const weight = {
-        weight: parseFloat(document.getElementById('weight-value').value)
+        value: weightValue,
+        date: new Date().toISOString()
     };
 
     try {
-        await fetchWithAuth(`${window.location.origin}/weights`, {
+        const response = await fetchWithAuth(`${window.location.origin}/weights`, {
             method: 'POST',
             body: JSON.stringify(weight)
         });
+
+        if (response.error) {
+            throw new Error(response.error);
+        }
+
         await loadWeightData();
         e.target.reset();
+
+        // Show success message
+        const successDiv = document.createElement('div');
+        successDiv.className = 'alert alert-success alert-dismissible fade show';
+        successDiv.innerHTML = `
+            Weight entry added successfully!
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        `;
+        document.body.insertBefore(successDiv, document.body.firstChild);
     } catch (error) {
         console.error('Error adding weight entry:', error);
+        showError(error.message || "Failed to add weight entry. Please try again.");
     }
 });
 
