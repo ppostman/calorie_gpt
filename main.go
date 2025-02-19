@@ -1084,11 +1084,14 @@ func handleTokenExchange(c *gin.Context) {
 		data.Set("client_secret", tokenRequest.ClientSecret)
 	}
 
-	// Add scopes if provided, otherwise use default scopes
+	// Add scopes if provided, otherwise use scopes from auth0-config.js
 	if tokenRequest.Scope != "" {
 		data.Set("scope", tokenRequest.Scope)
+		log.Printf("[OAuth2] Using provided scope: %s", tokenRequest.Scope)
 	} else {
-		data.Set("scope", strings.Join(oauth2Config.Scopes, " "))
+		defaultScope := "openid profile email"
+		data.Set("scope", defaultScope)
+		log.Printf("[OAuth2] Using default scope from auth0-config: %s", defaultScope)
 	}
 
 	// Create token request
