@@ -1,17 +1,23 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"math/big"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt"
 	"github.com/google/uuid"
@@ -70,26 +76,9 @@ type Token struct {
 	AccessToken  string `json:"access_token"`
 	TokenType    string `json:"token_type"`
 	IDToken      string `json:"id_token"`
+	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int    `json:"expires_in"`
 	Scope        string `json:"scope"`
-	RefreshToken string `json:"refresh_token"`
-}
-
-type UserInfo struct {
-	Sub           string `json:"sub"`
-	Name          string `json:"name"`
-	Email         string `json:"email"`
-	EmailVerified bool   `json:"email_verified"`
-}
-
-type JWTKeys struct {
-	Keys []struct {
-		Kty string `json:"kty"`
-		Kid string `json:"kid"`
-		Use string `json:"use"`
-		N   string `json:"n"`
-		E   string `json:"e"`
-	} `json:"keys"`
 }
 
 var (
@@ -405,6 +394,16 @@ func deleteWeight(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"message": "Weight record deleted successfully"})
+}
+
+type JWTKeys struct {
+	Keys []struct {
+		Kty string `json:"kty"`
+		Kid string `json:"kid"`
+		Use string `json:"use"`
+		N   string `json:"n"`
+		E   string `json:"e"`
+	} `json:"keys"`
 }
 
 func getJWKS() (*JWTKeys, error) {
@@ -779,63 +778,31 @@ func handleOAuth2Callback(c *gin.Context) {
 		redirectURI = "/"
 	}
 
+	// Exchange the authorization code for tokens
+	codeVerifier, _ := c.Cookie("code_verifier")
+	token, err := exchangeCodeForToken(code, codeVerifier)
+	if err != nil {
+		log.Printf("[OAuth2] Token exchange error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to exchange code for token"})
+		return
+	}
+
 	// Clear the cookies with secure settings
 	c.SetSameSite(http.SameSiteLaxMode)
 	c.SetCookie("oauth_state", "", -1, "/", domain, true, true)
 	c.SetCookie("oauth_redirect_uri", "", -1, "/", domain, true, true)
+	c.SetCookie("code_verifier", "", -1, "/", domain, true, true)
 
-	// Exchange the code for tokens
-	codeVerifier, err := c.Cookie("code_verifier")
-	if err != nil {
-		log.Printf("[OAuth2] Error getting code_verifier: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing code verifier"})
-		return
-	}
-
-	token, err := exchangeCodeForToken(code, codeVerifier)
-	if err != nil {
-		log.Printf("[OAuth2] Token exchange error: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Failed to exchange token: %v", err)})
-		return
-	}
-
-	// Get user info
-	userInfo, err := getUserInfo(token.AccessToken)
-	if err != nil {
-		log.Printf("[OAuth2] Error getting user info: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Failed to get user info: %v", err)})
-		return
-	}
-
-	// Set the session cookie
-	sessionToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":   userInfo.Sub,
-		"email": userInfo.Email,
-		"name":  userInfo.Name,
-		"exp":   time.Now().Add(24 * time.Hour).Unix(),
-	})
-
-	signedToken, err := sessionToken.SignedString([]byte(os.Getenv("JWT_SECRET")))
-	if err != nil {
-		log.Printf("[OAuth2] Error signing session token: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
-		return
-	}
-
-	// Set session cookie
-	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie("session", signedToken, 86400, "/", domain, false, false)
-
-	// First send JSON response
+	// Return token information as JSON
 	c.JSON(http.StatusOK, gin.H{
-		"status": "success",
-		"user": gin.H{
-			"sub":   userInfo.Sub,
-			"email": userInfo.Email,
-			"name":  userInfo.Name,
-		},
-		"redirect_uri": redirectURI,
+		"access_token":  token.AccessToken,
+		"token_type":    "Bearer",
+		"refresh_token": token.RefreshToken,
+		"expires_in":    token.ExpiresIn,
 	})
+
+	// Wait a brief moment for the JSON to be sent
+	time.Sleep(100 * time.Millisecond)
 
 	// Then redirect
 	c.Redirect(http.StatusTemporaryRedirect, redirectURI)
@@ -850,7 +817,7 @@ func handleUserInfo(c *gin.Context) {
 	}
 	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 
-	// Parse and validate the JWT
+	// Parse and validate the token
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		// Log token details for debugging
 		log.Printf("[UserInfo] Token Headers: %+v", token.Header)
@@ -924,50 +891,40 @@ func exchangeCodeForToken(code, codeVerifier string) (*Token, error) {
 	data.Set("redirect_uri", oauth2Config.RedirectURI)
 	data.Set("code_verifier", codeVerifier)
 
-	req, err := http.NewRequest("POST", oauth2Config.TokenURL, strings.NewReader(data.Encode()))
+	// Create token request
+	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token request: %v", err)
 	}
 
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
+	// Set proper headers
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	tokenReq.Header.Set("Accept", "application/json")
 
+	// Make the request
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := client.Do(tokenReq)
 	if err != nil {
 		return nil, fmt.Errorf("token request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
+	// Read response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read token response: %v", err)
+	}
+
+	// Log raw token response for debugging
+	log.Printf("[OAuth2] Raw token response: %s", string(body))
+
+	// Parse response
 	var token Token
-	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+	if err := json.Unmarshal(body, &token); err != nil {
 		return nil, fmt.Errorf("failed to parse token response: %v", err)
 	}
 
 	return &token, nil
-}
-
-func getUserInfo(accessToken string) (*UserInfo, error) {
-	req, err := http.NewRequest("GET", "https://dev-lk0vcub54idn0l5c.us.auth0.com/userinfo", nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create userinfo request: %v", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("userinfo request failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var userInfo UserInfo
-	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
-		return nil, fmt.Errorf("failed to parse userinfo response: %v", err)
-	}
-
-	return &userInfo, nil
 }
 
 func main() {
