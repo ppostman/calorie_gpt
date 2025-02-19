@@ -761,9 +761,9 @@ func handleOAuth2Authorize(c *gin.Context) {
 
 	// Build authorization URL with all necessary parameters
 	params := url.Values{}
-	params.Set("response_type", "code")
 	params.Set("client_id", clientID)
 	params.Set("redirect_uri", redirectURI)
+	params.Set("response_type", "code id_token")
 	params.Set("scope", scopes)
 	params.Set("state", state)
 	// params.Set("audience", "https://dev-lk0vcub54idn0l5c.us.auth0.com/api/v2/")
