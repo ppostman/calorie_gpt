@@ -693,7 +693,6 @@ func handleOAuth2Authorize(c *gin.Context) {
 	}
 
 	log.Printf("[OAuth2] Setting cookies for domain: %s", domain)
-	log.Printf("[OAuth2] Generated state: %s", state)
 
 	// Store state and redirect_uri in cookies with more permissive settings
 	c.SetSameSite(http.SameSiteLaxMode)
@@ -708,14 +707,7 @@ func handleOAuth2Authorize(c *gin.Context) {
 	params.Set("redirect_uri", oauth2Config.RedirectURI)
 	params.Set("scope", strings.Join(oauth2Config.Scopes, " "))
 	params.Set("state", state)
-	params.Set("audience", "https://dev-lk0vcub54idn0l5c.us.auth0.com/api/v2/")
-
-	// Add PKCE for additional security
-	codeVerifier := generateCodeVerifier()
-	codeChallenge := generateCodeChallenge(codeVerifier)
-	c.SetCookie("code_verifier", codeVerifier, 3600, "/", "", false, false) // Remove Secure and HttpOnly for testing
-	params.Set("code_challenge", codeChallenge)
-	params.Set("code_challenge_method", "S256")
+	// params.Set("audience", "https://dev-lk0vcub54idn0l5c.us.auth0.com/api/v2/")
 
 	authURL := oauth2Config.AuthURL + "?" + params.Encode()
 	log.Printf("[OAuth2] Redirecting to Auth0 with state: %s", state)
@@ -737,7 +729,7 @@ func handleOAuth2Callback(c *gin.Context) {
 
 	// Log all cookies
 	for _, cookie := range c.Request.Cookies() {
-		log.Printf("[OAuth2] Cookie found - Name: %s, Value: %s, Domain: %s, Path: %s", 
+		log.Printf("[OAuth2] Cookie found - Name: %s, Value: %s, Domain: %s, Path: %s",
 			cookie.Name, cookie.Value, cookie.Domain, cookie.Path)
 	}
 
@@ -759,7 +751,7 @@ func handleOAuth2Callback(c *gin.Context) {
 			"error": "Invalid state parameter",
 			"details": gin.H{
 				"received_state": state,
-				"stored_state":  storedState,
+				"stored_state":   storedState,
 			},
 		})
 		return
