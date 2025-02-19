@@ -145,6 +145,33 @@ components:
               format: date-time
               example: "2025-02-16T10:30:00Z"
 
+    DailyCaloriesResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/NutritionEntry'
+        totalCalories:
+          type: number
+          format: float
+          description: Total calories consumed for the day
+        limit:
+          $ref: '#/components/schemas/DailyCalorieLimit'
+          nullable: true
+        limitStatus:
+          type: string
+          enum: [exact_match, using_previous, unconfigured]
+          description: |
+            Status of the calorie limit:
+            * exact_match - Limit found for the exact date requested
+            * using_previous - Using most recent limit from a previous date
+            * unconfigured - No limit has been configured yet
+        message:
+          type: string
+          description: Additional information about the limit status
+          example: "Using most recent calorie limit"
+
     CalorieCalculation:
       type: object
       properties:
@@ -446,7 +473,7 @@ paths:
   /calories/{date}:
     get:
       operationId: getDailyCalories
-      summary: Get calorie calculations for a specific date
+      summary: Get daily calories and limit for a specific date. If no limit exists for the requested date, returns the most recent limit. If no limits exist at all, returns null limit with unconfigured status.
       security:
         - oauth2: []
       parameters:
@@ -460,13 +487,13 @@ paths:
           example: "2025-02-16T00:00:00Z"
       responses:
         '200':
-          description: Daily calorie calculations
+          description: Daily calories with limit status
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CalorieCalculation'
-        '404':
-          description: Daily limit not found
+                $ref: '#/components/schemas/DailyCaloriesResponse'
+        '500':
+          description: Internal server error
           content:
             application/json:
               schema:

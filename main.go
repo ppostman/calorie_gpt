@@ -240,37 +240,63 @@ func getDailyCalories(c *gin.Context) {
 	}
 
 	date := c.Param("date")
-
-	// Get daily limit
+	var entries []NutritionEntry
 	var limit DailyCalorieLimit
-	if err := db.Where("user_id = ? AND date = ?", userID, date).First(&limit).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Daily limit not found for this date"})
+	var totalCalories float64
+
+	// Get all nutrition entries for the date
+	if err := db.Where("user_id = ? AND date = ?", userID, date).Find(&entries).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Get all entries for the date
-	var entries []NutritionEntry
-	db.Where("user_id = ? AND date = ?", userID, date).Find(&entries)
-
-	// Calculate total consumed calories
-	var consumedCalories float64
+	// Calculate total calories
 	for _, entry := range entries {
-		consumedCalories += entry.Calories
+		totalCalories += entry.Calories
 	}
 
-	// Calculate remaining calories
-	remainingCalories := limit.Limit - consumedCalories
-
-	calculation := CalorieCalculation{
-		Date:              date,
-		BaseCalories:      0,
-		WorkoutCalories:   0,
-		ConsumedCalories:  consumedCalories,
-		RemainingCalories: remainingCalories,
-		Entries:           entries,
+	// Try to find limit for the requested date
+	if err := db.Where("user_id = ? AND date = ?", userID, date).First(&limit).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// Try to find the most recent limit
+			if err := db.Where("user_id = ?", userID).
+				Order("date DESC").
+				First(&limit).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					// No limits found at all
+					c.JSON(http.StatusOK, gin.H{
+						"entries":        entries,
+						"totalCalories": totalCalories,
+						"limit":         nil,
+						"message":       "No calorie limit configured",
+						"limitStatus":   "unconfigured",
+					})
+					return
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			// Return with most recent limit
+			c.JSON(http.StatusOK, gin.H{
+				"entries":        entries,
+				"totalCalories": totalCalories,
+				"limit":         limit,
+				"message":       "Using most recent calorie limit",
+				"limitStatus":   "using_previous",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
-	c.JSON(http.StatusOK, calculation)
+	// Return with exact limit match
+	c.JSON(http.StatusOK, gin.H{
+		"entries":        entries,
+		"totalCalories": totalCalories,
+		"limit":         limit,
+		"limitStatus":   "exact_match",
+	})
 }
 
 func updateEntry(c *gin.Context) {
