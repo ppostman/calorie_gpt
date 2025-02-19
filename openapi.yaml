@@ -55,22 +55,17 @@ components:
       type: object
       required:
         - date
-        - base_calories
+        - limit
       properties:
         date:
           type: string
-          format: date
-          example: "2025-02-16"
-        base_calories:
+          format: date-time
+          example: "2025-02-16T00:00:00Z"
+        limit:
           type: number
           format: float
-          description: Daily base calorie limit
+          description: Daily calorie limit
           example: 2000
-        workout_calories:
-          type: number
-          format: float
-          description: Additional calories from workouts
-          example: 300
 
     DailyCalorieLimit:
       allOf:
@@ -80,6 +75,9 @@ components:
             id:
               type: integer
               example: 1
+            user_id:
+              type: string
+              example: "auth0|123456789"
             created_at:
               type: string
               format: date-time
@@ -98,8 +96,8 @@ components:
       properties:
         date:
           type: string
-          format: date
-          example: "2025-02-16"
+          format: date-time
+          example: "2025-02-16T00:00:00Z"
         food:
           type: string
           description: Name of the food item
@@ -124,9 +122,9 @@ components:
           format: float
           description: Fat content in grams
           example: 20
-        description:
+        notes:
           type: string
-          description: Additional details about the food item
+          description: Additional notes about the food item
           example: "Grilled chicken breast with mixed greens"
 
     NutritionEntry:
@@ -137,6 +135,9 @@ components:
             id:
               type: integer
               example: 1
+            user_id:
+              type: string
+              example: "auth0|123456789"
             created_at:
               type: string
               format: date-time
@@ -151,16 +152,12 @@ components:
       properties:
         date:
           type: string
-          format: date
-          example: "2025-02-16"
-        base_calories:
+          format: date-time
+          example: "2025-02-16T00:00:00Z"
+        limit:
           type: number
           format: float
           example: 2000
-        workout_calories:
-          type: number
-          format: float
-          example: 300
         consumed_calories:
           type: number
           format: float
@@ -168,7 +165,7 @@ components:
         remaining_calories:
           type: number
           format: float
-          example: 1100
+          example: 800
         entries:
           type: array
           items:
@@ -185,13 +182,13 @@ components:
       type: object
       required:
         - date
-        - weight
+        - value
       properties:
         date:
           type: string
-          format: date
-          example: "2025-02-16"
-        weight:
+          format: date-time
+          example: "2025-02-16T00:00:00Z"
+        value:
           type: number
           format: float
           description: Weight in kilograms
@@ -199,7 +196,6 @@ components:
         notes:
           type: string
           description: Additional notes about the weight record
-          example: "After morning workout"
 
     Weight:
       allOf:
@@ -209,6 +205,9 @@ components:
             id:
               type: integer
               example: 1
+            user_id:
+              type: string
+              example: "auth0|123456789"
             created_at:
               type: string
               format: date-time
@@ -217,6 +216,33 @@ components:
               type: string
               format: date-time
               example: "2025-02-16T10:30:00Z"
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        sub:
+          type: string
+          example: "auth0|123456789"
+        email:
+          type: string
+          example: "user@example.com"
+        name:
+          type: string
+          example: "John Doe"
+        picture:
+          type: string
+          example: "https://example.com/avatar.jpg"
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-02-16T10:30:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2025-02-16T10:30:00Z"
 
 paths:
   /daily-limits:
@@ -263,9 +289,9 @@ paths:
           required: true
           schema:
             type: string
-            format: date
-          description: Date in YYYY-MM-DD format
-          example: "2025-02-16"
+            format: date-time
+          description: Date in YYYY-MM-DDTHH:MM:SSZ format
+          example: "2025-02-16T00:00:00Z"
       responses:
         '200':
           description: Daily limit found
@@ -422,9 +448,9 @@ paths:
           required: true
           schema:
             type: string
-            format: date
-          description: Date in YYYY-MM-DD format
-          example: "2025-02-16"
+            format: date-time
+          description: Date in YYYY-MM-DDTHH:MM:SSZ format
+          example: "2025-02-16T00:00:00Z"
       responses:
         '200':
           description: List of nutrition entries for the date
@@ -447,9 +473,9 @@ paths:
           required: true
           schema:
             type: string
-            format: date
-          description: Date in YYYY-MM-DD format
-          example: "2025-02-16"
+            format: date-time
+          description: Date in YYYY-MM-DDTHH:MM:SSZ format
+          example: "2025-02-16T00:00:00Z"
       responses:
         '200':
           description: Daily calorie calculations
@@ -623,9 +649,9 @@ paths:
           required: true
           schema:
             type: string
-            format: date
-          description: Date in YYYY-MM-DD format
-          example: "2025-02-16"
+            format: date-time
+          description: Date in YYYY-MM-DDTHH:MM:SSZ format
+          example: "2025-02-16T00:00:00Z"
       responses:
         '200':
           description: List of weight records for the date

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -27,23 +28,22 @@ import (
 )
 
 type DailyCalorieLimit struct {
-	gorm.Model      `json:"-"`
-	UserID          string  `json:"user_id" gorm:"not null"`
-	Date            string  `json:"date"`
-	BaseCalories    float64 `json:"base_calories"`
-	WorkoutCalories float64 `json:"workout_calories"`
+	gorm.Model
+	UserID string    `json:"user_id" gorm:"index;not null"`
+	Date   time.Time `json:"date"`
+	Limit  float64   `json:"limit"`
 }
 
 type NutritionEntry struct {
-	gorm.Model  `json:"-"`
-	UserID      string  `json:"user_id" gorm:"not null"`
-	Date        string  `json:"date"`
-	Food        string  `json:"food"`
-	Calories    float64 `json:"calories"`
-	Protein     float64 `json:"protein"`
-	Carbs       float64 `json:"carbs"`
-	Fat         float64 `json:"fat"`
-	Description string  `json:"description"`
+	gorm.Model
+	UserID    string    `json:"user_id" gorm:"index;not null"`
+	Date      time.Time `json:"date"`
+	Food      string    `json:"food"`
+	Calories  float64   `json:"calories"`
+	Protein   float64   `json:"protein"`
+	Carbs     float64   `json:"carbs"`
+	Fat       float64   `json:"fat"`
+	Notes     string    `json:"notes"`
 }
 
 type CalorieCalculation struct {
@@ -56,11 +56,19 @@ type CalorieCalculation struct {
 }
 
 type Weight struct {
-	gorm.Model `json:"-"`
-	UserID     string  `json:"user_id" gorm:"not null"`
-	Date       string  `json:"date" gorm:"not null"`
-	Weight     float64 `json:"weight" gorm:"not null"`
-	Notes      string  `json:"notes"`
+	gorm.Model
+	UserID string    `json:"user_id" gorm:"index;not null"`
+	Date   time.Time `json:"date"`
+	Value  float64   `json:"value"`
+	Notes  string    `json:"notes"`
+}
+
+type User struct {
+	gorm.Model
+	Sub     string `json:"sub" gorm:"uniqueIndex;not null"`
+	Email   string `json:"email"`
+	Name    string `json:"name"`
+	Picture string `json:"picture"`
 }
 
 type OAuth2Config struct {
@@ -82,106 +90,135 @@ var (
 )
 
 func createDailyLimit(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	var limit DailyCalorieLimit
 	if err := c.ShouldBindJSON(&limit); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	userID, _ := c.Get("userID")
-	limit.UserID = userID.(string)
-
-	// Check if a limit already exists for this date and user
-	var existingLimit DailyCalorieLimit
-	if result := db.Where("user_id = ? AND date = ?", limit.UserID, limit.Date).First(&existingLimit); result.Error == nil {
-		// Update existing limit
-		existingLimit.BaseCalories = limit.BaseCalories
-		existingLimit.WorkoutCalories = limit.WorkoutCalories
-		db.Save(&existingLimit)
-		c.JSON(200, existingLimit)
+	limit.UserID = userID
+	if err := db.Create(&limit).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Create new limit
-	db.Create(&limit)
-	c.JSON(201, limit)
+	c.JSON(http.StatusCreated, limit)
 }
 
 func getDailyLimit(c *gin.Context) {
-	date := c.Param("date")
-	userID, _ := c.Get("userID")
-	var limit DailyCalorieLimit
-
-	if err := db.Where("user_id = ? AND date = ?", userID, date).First(&limit).Error; err != nil {
-		// Return a default limit if none exists
-		limit = DailyCalorieLimit{
-			UserID:          userID.(string),
-			Date:            date,
-			BaseCalories:    2000, // Default daily calorie limit
-			WorkoutCalories: 0,
-		}
-	}
-
-	c.JSON(200, limit)
-}
-
-func createEntry(c *gin.Context) {
-	var entry NutritionEntry
-	if err := c.ShouldBindJSON(&entry); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
 
-	userID, _ := c.Get("userID")
-	entry.UserID = userID.(string)
+	date := c.Param("date")
+	var limit DailyCalorieLimit
+	if err := db.Where("user_id = ? AND date = ?", userID, date).First(&limit).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Daily limit not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
-	db.Create(&entry)
-	c.JSON(201, entry)
+	c.JSON(http.StatusOK, limit)
+}
+
+func createEntry(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	var entry NutritionEntry
+	if err := c.ShouldBindJSON(&entry); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	entry.UserID = userID
+	if err := db.Create(&entry).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, entry)
 }
 
 func getEntries(c *gin.Context) {
-	userID, _ := c.Get("userID")
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	var entries []NutritionEntry
 	if err := db.Where("user_id = ?", userID).Find(&entries).Error; err != nil {
-		entries = []NutritionEntry{} // Return empty array if error
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
-	c.JSON(200, entries)
+
+	c.JSON(http.StatusOK, entries)
 }
 
 func getEntry(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	id := c.Param("id")
-	userID, _ := c.Get("userID")
 	var entry NutritionEntry
 
 	if err := db.Where("user_id = ?", userID).First(&entry, id).Error; err != nil {
 		if err.Error() == "record not found" {
-			c.JSON(404, gin.H{"error": "Entry not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "Entry not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(200, entry)
+	c.JSON(http.StatusOK, entry)
 }
 
 func getEntriesByDate(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	date := c.Param("date")
-	userID, _ := c.Get("userID")
 	var entries []NutritionEntry
 
 	db.Where("user_id = ? AND date = ?", userID, date).Find(&entries)
-	c.JSON(200, entries)
+	c.JSON(http.StatusOK, entries)
 }
 
 func getDailyCalories(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	date := c.Param("date")
-	userID, _ := c.Get("userID")
 
 	// Get daily limit
 	var limit DailyCalorieLimit
 	if err := db.Where("user_id = ? AND date = ?", userID, date).First(&limit).Error; err != nil {
-		c.JSON(404, gin.H{"error": "Daily limit not found for this date"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Daily limit not found for this date"})
 		return
 	}
 
@@ -196,196 +233,236 @@ func getDailyCalories(c *gin.Context) {
 	}
 
 	// Calculate remaining calories
-	remainingCalories := limit.BaseCalories + limit.WorkoutCalories - consumedCalories
+	remainingCalories := limit.Limit - consumedCalories
 
 	calculation := CalorieCalculation{
 		Date:              date,
-		BaseCalories:      limit.BaseCalories,
-		WorkoutCalories:   limit.WorkoutCalories,
+		BaseCalories:      0,
+		WorkoutCalories:   0,
 		ConsumedCalories:  consumedCalories,
 		RemainingCalories: remainingCalories,
 		Entries:           entries,
 	}
 
-	c.JSON(200, calculation)
+	c.JSON(http.StatusOK, calculation)
 }
 
 func updateEntry(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	id := c.Param("id")
-	userID, _ := c.Get("userID")
 	var entry NutritionEntry
 
 	if err := db.Where("user_id = ?", userID).First(&entry, id).Error; err != nil {
 		if err.Error() == "record not found" {
-			c.JSON(404, gin.H{"error": "Entry not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "Entry not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Only allow updating the entry if it belongs to the user
-	if entry.UserID != userID.(string) {
-		c.JSON(403, gin.H{"error": "Not authorized to update this entry"})
+	if entry.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Not authorized to update this entry"})
 		return
 	}
 
 	if err := c.ShouldBindJSON(&entry); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	entry.UserID = userID.(string) // Ensure UserID remains unchanged
+	entry.UserID = userID // Ensure UserID remains unchanged
 	db.Save(&entry)
-	c.JSON(200, entry)
+	c.JSON(http.StatusOK, entry)
 }
 
 func deleteEntry(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	id := c.Param("id")
-	userID, _ := c.Get("userID")
 	var entry NutritionEntry
 
 	if err := db.Where("user_id = ?", userID).First(&entry, id).Error; err != nil {
 		if err.Error() == "record not found" {
-			c.JSON(404, gin.H{"error": "Entry not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "Entry not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Only allow deleting the entry if it belongs to the user
-	if entry.UserID != userID.(string) {
-		c.JSON(403, gin.H{"error": "Not authorized to delete this entry"})
+	if entry.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Not authorized to delete this entry"})
 		return
 	}
 
 	db.Delete(&entry)
-	c.JSON(200, gin.H{"message": "Entry deleted successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "Entry deleted successfully"})
 }
 
 func createWeight(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	var weight Weight
 	if err := c.ShouldBindJSON(&weight); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	userID, _ := c.Get("userID")
-	weight.UserID = userID.(string)
-
+	weight.UserID = userID
 	if err := db.Create(&weight).Error; err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(201, weight)
+	c.JSON(http.StatusCreated, weight)
 }
 
 func getWeight(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	id := c.Param("id")
-	userID, _ := c.Get("userID")
 	var weight Weight
 
 	if err := db.Where("user_id = ?", userID).First(&weight, id).Error; err != nil {
 		if err.Error() == "record not found" {
-			c.JSON(404, gin.H{"error": "Weight record not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "Weight record not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(200, weight)
+	c.JSON(http.StatusOK, weight)
 }
 
 func getWeightsByDate(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	date := c.Param("date")
-	userID, _ := c.Get("userID")
 	var weights []Weight
 
 	if err := db.Where("user_id = ? AND date = ?", userID, date).Find(&weights).Error; err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(200, weights)
+	c.JSON(http.StatusOK, weights)
 }
 
 func getWeights(c *gin.Context) {
-	userID, _ := c.Get("userID")
-	var weights []Weight
-	if err := db.Where("user_id = ?", userID).Find(&weights).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error retrieving weights"})
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
+
+	var weights []Weight
+	if err := db.Where("user_id = ?", userID).Find(&weights).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	c.JSON(http.StatusOK, weights)
 }
 
 func updateWeight(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	id := c.Param("id")
-	userID, _ := c.Get("userID")
 	var weight Weight
 
 	if err := db.Where("user_id = ?", userID).First(&weight, id).Error; err != nil {
 		if err.Error() == "record not found" {
-			c.JSON(404, gin.H{"error": "Weight record not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "Weight record not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Only allow updating the weight if it belongs to the user
-	if weight.UserID != userID.(string) {
-		c.JSON(403, gin.H{"error": "Not authorized to update this weight"})
+	if weight.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Not authorized to update this weight"})
 		return
 	}
 
 	var updatedWeight Weight
 	if err := c.ShouldBindJSON(&updatedWeight); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	weight.Date = updatedWeight.Date
-	weight.Weight = updatedWeight.Weight
+	weight.Value = updatedWeight.Value
 	weight.Notes = updatedWeight.Notes
 
 	if err := db.Save(&weight).Error; err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(200, weight)
+	c.JSON(http.StatusOK, weight)
 }
 
 func deleteWeight(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	id := c.Param("id")
-	userID, _ := c.Get("userID")
 	var weight Weight
 
 	if err := db.Where("user_id = ?", userID).First(&weight, id).Error; err != nil {
 		if err.Error() == "record not found" {
-			c.JSON(404, gin.H{"error": "Weight record not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "Weight record not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Only allow deleting the weight if it belongs to the user
-	if weight.UserID != userID.(string) {
-		c.JSON(403, gin.H{"error": "Not authorized to delete this weight"})
+	if weight.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Not authorized to delete this weight"})
 		return
 	}
 
 	if err := db.Delete(&weight).Error; err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(200, gin.H{"message": "Weight record deleted successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "Weight record deleted successfully"})
 }
 
 type JWTKeys struct {
@@ -541,10 +618,44 @@ func authMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Log claims for debugging
-		log.Printf("[Auth] Token claims: %+v", claims)
+		// Get user sub from claims
+		sub, ok := claims["sub"].(string)
+		if !ok {
+			log.Printf("[Auth] No sub claim in token")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "No sub claim in token"})
+			c.Abort()
+			return
+		}
 
-		// Store claims in context
+		// Find or create user
+		var user User
+		result := db.Where("sub = ?", sub).First(&user)
+		if result.Error != nil {
+			if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+				// Create new user
+				user = User{
+					Sub:     sub,
+					Email:   getClaimString(claims, "email", ""),
+					Name:    getClaimString(claims, "name", ""),
+					Picture: getClaimString(claims, "picture", ""),
+				}
+				if err := db.Create(&user).Error; err != nil {
+					log.Printf("[Auth] Failed to create user: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
+					c.Abort()
+					return
+				}
+				log.Printf("[Auth] Created new user with sub: %s", sub)
+			} else {
+				log.Printf("[Auth] Database error: %v", result.Error)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+				c.Abort()
+				return
+			}
+		}
+
+		// Store user info in context
+		c.Set("userID", sub)
 		c.Set("user", claims)
 		c.Next()
 	}
@@ -633,7 +744,7 @@ func initDB() {
 	}
 
 	// Auto migrate tables (this will create tables if they don't exist)
-	err = db.AutoMigrate(&NutritionEntry{}, &DailyCalorieLimit{}, &Weight{})
+	err = db.AutoMigrate(&NutritionEntry{}, &DailyCalorieLimit{}, &Weight{}, &User{})
 	if err != nil {
 		log.Fatal("Failed to migrate database tables:", err)
 	}
@@ -951,9 +1062,10 @@ func handleUserInfo(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// getClaimString safely extracts a string claim from jwt.MapClaims with a default value
 func getClaimString(claims jwt.MapClaims, key string, defaultValue string) string {
-	if value, exists := claims[key]; exists {
-		if str, ok := value.(string); ok {
+	if val, ok := claims[key]; ok {
+		if str, ok := val.(string); ok {
 			return str
 		}
 	}
