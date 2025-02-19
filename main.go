@@ -1331,6 +1331,7 @@ func main() {
 	r.StaticFile("/", "./static/index.html")
 	r.StaticFile("/auth0-config.js", "./static/auth0-config.js")
 	r.StaticFile("/app.js", "./static/app.js")
+	r.StaticFile("/privacy-policy.html", "./static/privacy-policy.html")
 
 	// Protected API routes
 	api := r.Group("/")
@@ -1352,6 +1353,10 @@ func main() {
 		api.PUT("/weight/:id", updateWeight)
 		api.DELETE("/weight/:id", deleteWeight)
 	}
+
+	r.GET("/privacy", func(c *gin.Context) {
+		c.File("./static/privacy-policy.html")
+	})
 
 	port := os.Getenv("PORT")
 	if port == "" {

@@ -844,3 +844,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+
+  /privacy:
+    get:
+      operationId: getPrivacyPolicy
+      summary: Get the privacy policy
+      description: Returns the HTML page containing our privacy policy
+      responses:
+        '200':
+          description: Privacy policy HTML page
+          content:
+            text/html:
+              schema:
+                type: string
