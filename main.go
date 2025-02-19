@@ -976,44 +976,42 @@ func handleTokenExchange(c *gin.Context) {
 		return
 	}
 	log.Printf("[OAuth2] Token request body: %s", string(rawBody))
-	
-	// Restore the body for parsing
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(rawBody))
 
-	var tokenRequest struct {
-		Code         string `json:"code" form:"code" binding:"required"`
-		RedirectURI  string `json:"redirect_uri" form:"redirect_uri" binding:"required"`
-		ClientID     string `json:"client_id" form:"client_id"`
-		ClientSecret string `json:"client_secret" form:"client_secret"`
-		GrantType    string `json:"grant_type" form:"grant_type" binding:"required"`
-	}
-
-	// Try to bind based on content type
-	contentType := c.GetHeader("Content-Type")
-	var bindErr error
-	if strings.Contains(contentType, "application/json") {
-		bindErr = c.ShouldBindJSON(&tokenRequest)
-	} else {
-		// Default to form data
-		bindErr = c.ShouldBind(&tokenRequest)
-	}
-
-	if bindErr != nil {
-		log.Printf("[OAuth2] Invalid token request: %v", bindErr)
+	// Parse the form data
+	values, err := url.ParseQuery(string(rawBody))
+	if err != nil {
+		log.Printf("[OAuth2] Failed to parse form data: %v", err)
 		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":             "invalid_request",
-			"error_description": "Invalid request parameters",
+			"error_description": "Invalid form data",
 		})
 		return
 	}
-	
-	// Validate grant type
-	if tokenRequest.GrantType != "authorization_code" {
+
+	// Extract values from form data
+	tokenRequest := struct {
+		Code         string
+		RedirectURI  string
+		ClientID     string
+		ClientSecret string
+		GrantType    string
+	}{
+		Code:         values.Get("code"),
+		RedirectURI:  values.Get("redirect_uri"),
+		ClientID:     values.Get("client_id"),
+		ClientSecret: values.Get("client_secret"),
+		GrantType:    values.Get("grant_type"),
+	}
+
+	// Validate required fields
+	if tokenRequest.Code == "" || tokenRequest.RedirectURI == "" || tokenRequest.GrantType == "" {
+		log.Printf("[OAuth2] Missing required fields - code: %v, redirect_uri: %v, grant_type: %v",
+			tokenRequest.Code != "", tokenRequest.RedirectURI != "", tokenRequest.GrantType != "")
 		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":             "unsupported_grant_type",
-			"error_description": "Only authorization_code grant type is supported",
+			"error":             "invalid_request",
+			"error_description": "Missing required parameters",
 		})
 		return
 	}
