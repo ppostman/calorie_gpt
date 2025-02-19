@@ -17,8 +17,6 @@ info:
 servers:
   - url: https://calorie-gpt.onrender.com
     description: Production server
-  - url: http://localhost:8080
-    description: Local development server
 
 security:
   - oauth2: []
@@ -244,8 +242,147 @@ components:
           format: date-time
           example: "2025-02-16T10:30:00Z"
 
+    DailyCalorieLimitResponse:
+      type: object
+      properties:
+        limit:
+          $ref: '#/components/schemas/DailyCalorieLimit'
+        status:
+          type: string
+          enum: [exact_match, using_previous, unconfigured]
+          description: |
+            Status of the response:
+            * exact_match - Limit found for the exact date requested
+            * using_previous - Using most recent limit from a previous date
+            * unconfigured - No limit has been configured yet
+        message:
+          type: string
+          description: Additional information about the response
+          example: "Using most recent calorie limit"
+
 paths:
-  /daily-limits:
+  /oauth2/authorize:
+    get:
+      operationId: handleOAuth2Authorize
+      summary: Start OAuth2 authorization flow
+      parameters:
+        - name: response_type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [code]
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: redirect_uri
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uri
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to Auth0 login page
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+
+  /oauth2/callback:
+    get:
+      operationId: handleOAuth2Callback
+      summary: Handle OAuth2 callback from Auth0
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect back to application
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+
+  /oauth2/token:
+    post:
+      operationId: handleTokenExchange
+      summary: Exchange authorization code for tokens
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - grant_type
+                - code
+                - redirect_uri
+              properties:
+                grant_type:
+                  type: string
+                  enum: [authorization_code]
+                code:
+                  type: string
+                redirect_uri:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          description: Token exchange successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  token_type:
+                    type: string
+                  expires_in:
+                    type: integer
+                  refresh_token:
+                    type: string
+                  id_token:
+                    type: string
+
+  /oauth2/userinfo:
+    get:
+      operationId: handleUserInfo
+      summary: Get authenticated user information
+      security:
+        - oauth2: []
+      responses:
+        '200':
+          description: User information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+  /daily-limit:
     post:
       operationId: createDailyLimit
       summary: Create or update a daily calorie limit
@@ -277,10 +414,10 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /daily-limits/{date}:
+  /daily-limit/{date}:
     get:
       operationId: getDailyLimit
-      summary: Get daily calorie limit for a specific date
+      summary: Get daily calorie limit for a specific date. If no limit exists for the requested date, returns the most recent limit. If no limits exist at all, returns a success response indicating no limit is configured.
       security:
         - oauth2: []
       parameters:
@@ -294,11 +431,40 @@ paths:
           example: "2025-02-16T00:00:00Z"
       responses:
         '200':
-          description: Daily limit found
+          description: Daily limit response. May contain an exact match, previous limit, or unconfigured status.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DailyCalorieLimit'
+                $ref: '#/components/schemas/DailyCalorieLimitResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /calories/{date}:
+    get:
+      operationId: getDailyCalories
+      summary: Get calorie calculations for a specific date
+      security:
+        - oauth2: []
+      parameters:
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: Date in YYYY-MM-DDTHH:MM:SSZ format
+          example: "2025-02-16T00:00:00Z"
+      responses:
+        '200':
+          description: Daily calorie calculations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalorieCalculation'
         '404':
           description: Daily limit not found
           content:
@@ -333,13 +499,38 @@ paths:
                 $ref: '#/components/schemas/Error'
     
     get:
-      operationId: getAllEntries
+      operationId: getEntries
       summary: Get all nutrition entries
       security:
         - oauth2: []
       responses:
         '200':
           description: List of nutrition entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NutritionEntry'
+
+  /entries/date/{date}:
+    get:
+      operationId: getEntriesByDate
+      summary: Get nutrition entries for a specific date
+      security:
+        - oauth2: []
+      parameters:
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: Date in YYYY-MM-DDTHH:MM:SSZ format
+          example: "2025-02-16T00:00:00Z"
+      responses:
+        '200':
+          description: List of nutrition entries for the date
           content:
             application/json:
               schema:
@@ -399,6 +590,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/NutritionEntry'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not authorized to update this entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           description: Entry not found
           content:
@@ -428,7 +631,13 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: Entry deleted successfully
+                    example: "Entry deleted successfully"
+        '403':
+          description: Not authorized to delete this entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           description: Entry not found
           content:
@@ -436,93 +645,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /entries/date/{date}:
-    get:
-      operationId: getEntriesByDate
-      summary: Get entries for a specific date
-      security:
-        - oauth2: []
-      parameters:
-        - name: date
-          in: path
-          required: true
-          schema:
-            type: string
-            format: date-time
-          description: Date in YYYY-MM-DDTHH:MM:SSZ format
-          example: "2025-02-16T00:00:00Z"
-      responses:
-        '200':
-          description: List of nutrition entries for the date
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/NutritionEntry'
-
-  /calories/{date}:
-    get:
-      operationId: getDailyCalories
-      summary: Get daily calorie calculations for a specific date
-      security:
-        - oauth2: []
-      parameters:
-        - name: date
-          in: path
-          required: true
-          schema:
-            type: string
-            format: date-time
-          description: Date in YYYY-MM-DDTHH:MM:SSZ format
-          example: "2025-02-16T00:00:00Z"
-      responses:
-        '200':
-          description: Daily calorie calculations
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CalorieCalculation'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /weights:
-    get:
-      operationId: getWeights
-      summary: Get all weight records for the authenticated user
-      security:
-        - oauth2: []
-      responses:
-        '200':
-          description: List of weight records
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Weight'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+  /weight:
     post:
       operationId: createWeight
       summary: Create a new weight record
@@ -547,8 +670,48 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+    
+    get:
+      operationId: getWeights
+      summary: Get all weight records
+      security:
+        - oauth2: []
+      responses:
+        '200':
+          description: List of weight records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Weight'
 
-  /weights/{id}:
+  /weight/date/{date}:
+    get:
+      operationId: getWeightsByDate
+      summary: Get weight records for a specific date
+      security:
+        - oauth2: []
+      parameters:
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: Date in YYYY-MM-DDTHH:MM:SSZ format
+          example: "2025-02-16T00:00:00Z"
+      responses:
+        '200':
+          description: List of weight records for the date
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Weight'
+
+  /weight/{id}:
     get:
       operationId: getWeight
       summary: Get a specific weight record
@@ -600,6 +763,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Weight'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not authorized to update this weight record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           description: Weight record not found
           content:
@@ -629,35 +804,16 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: Weight record deleted successfully
+                    example: "Weight record deleted successfully"
+        '403':
+          description: Not authorized to delete this weight record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           description: Weight record not found
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
-  /weights/date/{date}:
-    get:
-      operationId: getWeightsByDate
-      summary: Get weight records for a specific date
-      security:
-        - oauth2: []
-      parameters:
-        - name: date
-          in: path
-          required: true
-          schema:
-            type: string
-            format: date-time
-          description: Date in YYYY-MM-DDTHH:MM:SSZ format
-          example: "2025-02-16T00:00:00Z"
-      responses:
-        '200':
-          description: List of weight records for the date
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Weight'

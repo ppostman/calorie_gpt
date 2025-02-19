@@ -120,16 +120,42 @@ func getDailyLimit(c *gin.Context) {
 
 	date := c.Param("date")
 	var limit DailyCalorieLimit
+
+	// Try to find limit for the requested date
 	if err := db.Where("user_id = ? AND date = ?", userID, date).First(&limit).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Daily limit not found"})
+			// Try to find the most recent limit
+			if err := db.Where("user_id = ?", userID).
+				Order("date DESC").
+				First(&limit).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					// No limits found at all
+					c.JSON(http.StatusOK, gin.H{
+						"message": "No calorie limit configured",
+						"status":  "unconfigured",
+					})
+					return
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			// Return the most recent limit with a note
+			c.JSON(http.StatusOK, gin.H{
+				"limit":    limit,
+				"message": "Using most recent calorie limit",
+				"status":  "using_previous",
+			})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, limit)
+	// Return the exact match
+	c.JSON(http.StatusOK, gin.H{
+		"limit":   limit,
+		"status": "exact_match",
+	})
 }
 
 func createEntry(c *gin.Context) {
