@@ -816,27 +816,21 @@ func handleOAuth2Callback(c *gin.Context) {
 		return
 	}
 
-	// Build token request body
-	requestBody := map[string]string{
-		"client_id":     oauth2Config.ClientID,
-		"client_secret": oauth2Config.ClientSecret,
-		"audience":      "https://calorie-gpt-api",
-		"grant_type":    "client_credentials",
-	}
-
-	jsonBody, err := json.Marshal(requestBody)
-	if err != nil {
-		log.Printf("[OAuth2] Failed to marshal request body: %v", err)
-		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":             "server_error",
-			"error_description": "Failed to create token request",
-		})
-		return
-	}
+	// Exchange code for token with all necessary parameters
+	data := url.Values{}
+	data.Set("grant_type", "authorization_code")
+	data.Set("code", c.Query("code"))
+	data.Set("redirect_uri", oauth2Config.RedirectURI)
+	data.Set("client_id", oauth2Config.ClientID)
+	data.Set("client_secret", oauth2Config.ClientSecret)
+	data.Set("audience", "https://calorie-gpt-api")
+	data.Set("scope", "openid profile email offline_access")
+	data.Set("response_type", "token id_token")
+	data.Set("token_type", "JWT")
+	data.Set("nonce", nonce)
 
 	// Create token request
-	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, bytes.NewBuffer(jsonBody))
+	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		log.Printf("[OAuth2] Failed to create token request")
 		c.Header("Content-Type", "application/json")
@@ -847,7 +841,7 @@ func handleOAuth2Callback(c *gin.Context) {
 		return
 	}
 
-	tokenReq.Header.Set("Content-Type", "application/json")
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	// Send token request
 	client := &http.Client{Timeout: 10 * time.Second} // Add timeout
@@ -865,108 +859,6 @@ func handleOAuth2Callback(c *gin.Context) {
 
 	// Read response
 	rawBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("[OAuth2] Failed to read response body")
-		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":             "server_error",
-			"error_description": "Failed to read token response",
-		})
-		return
-	}
-
-	// Log Auth0's raw response
-	log.Printf("[OAuth2] Auth0 response status: %d", resp.StatusCode)
-	log.Printf("[OAuth2] Auth0 response headers: %+v", resp.Header)
-	log.Printf("[OAuth2] Auth0 response body: %s", string(rawBody))
-
-	// Check if Auth0 returned an error
-	if resp.StatusCode != http.StatusOK {
-		var errorResponse struct {
-			Error            string `json:"error"`
-			ErrorDescription string `json:"error_description"`
-		}
-		if err := json.Unmarshal(rawBody, &errorResponse); err != nil {
-			c.Header("Content-Type", "application/json")
-			c.JSON(resp.StatusCode, gin.H{
-				"error":             "server_error",
-				"error_description": "Failed to parse error response from Auth0",
-			})
-			return
-		}
-		c.Header("Content-Type", "application/json")
-		c.JSON(resp.StatusCode, errorResponse)
-		return
-	}
-
-	// Forward Auth0's response
-	c.Header("Content-Type", "application/json")
-	c.Data(http.StatusOK, "application/json", rawBody)
-}
-
-func handleTokenExchange(c *gin.Context) {
-	// Log raw request body
-	rawBody, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		log.Printf("[OAuth2] Failed to read request body: %v", err)
-		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":             "invalid_request",
-			"error_description": "Failed to read request body",
-		})
-		return
-	}
-	log.Printf("[OAuth2] Token request body: %s", string(rawBody))
-
-	// Build token request body
-	requestBody := map[string]string{
-		"client_id":     oauth2Config.ClientID,
-		"client_secret": oauth2Config.ClientSecret,
-		"audience":      "https://calorie-gpt-api",
-		"grant_type":    "client_credentials",
-	}
-
-	jsonBody, err := json.Marshal(requestBody)
-	if err != nil {
-		log.Printf("[OAuth2] Failed to marshal request body: %v", err)
-		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":             "server_error",
-			"error_description": "Failed to create token request",
-		})
-		return
-	}
-
-	// Create token request
-	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, bytes.NewBuffer(jsonBody))
-	if err != nil {
-		log.Printf("[OAuth2] Failed to create token request")
-		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":             "server_error",
-			"error_description": "Failed to create token request",
-		})
-		return
-	}
-
-	tokenReq.Header.Set("Content-Type", "application/json")
-
-	// Send token request
-	client := &http.Client{Timeout: 10 * time.Second} // Add timeout
-	resp, err := client.Do(tokenReq)
-	if err != nil {
-		log.Printf("[OAuth2] Token request failed")
-		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":             "server_error",
-			"error_description": "Failed to exchange code for token",
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	// Read response
-	rawBody, err = io.ReadAll(resp.Body)
 	if err != nil {
 		log.Printf("[OAuth2] Failed to read response body")
 		c.Header("Content-Type", "application/json")
@@ -1078,6 +970,148 @@ func generateCodeVerifier() string {
 func generateCodeChallenge(verifier string) string {
 	hash := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(hash[:])
+}
+
+func handleTokenExchange(c *gin.Context) {
+	// Log raw request body
+	rawBody, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		log.Printf("[OAuth2] Failed to read request body: %v", err)
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":             "invalid_request",
+			"error_description": "Failed to read request body",
+		})
+		return
+	}
+	log.Printf("[OAuth2] Token request body: %s", string(rawBody))
+
+	// Parse the form data
+	values, err := url.ParseQuery(string(rawBody))
+	if err != nil {
+		log.Printf("[OAuth2] Failed to parse form data: %v", err)
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":             "invalid_request",
+			"error_description": "Invalid form data",
+		})
+		return
+	}
+
+	// Extract values from form data
+	tokenRequest := struct {
+		Code         string
+		RedirectURI  string
+		ClientID     string
+		ClientSecret string
+		GrantType    string
+		Scope        string
+	}{
+		Code:         values.Get("code"),
+		RedirectURI:  values.Get("redirect_uri"),
+		ClientID:     values.Get("client_id"),
+		ClientSecret: values.Get("client_secret"),
+		GrantType:    values.Get("grant_type"),
+		Scope:        values.Get("scope"),
+	}
+
+	// Validate required fields
+	if tokenRequest.Code == "" || tokenRequest.RedirectURI == "" || tokenRequest.GrantType == "" {
+		log.Printf("[OAuth2] Missing required fields - code: %v, redirect_uri: %v, grant_type: %v",
+			tokenRequest.Code != "", tokenRequest.RedirectURI != "", tokenRequest.GrantType != "")
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":             "invalid_request",
+			"error_description": "Missing required parameters",
+		})
+		return
+	}
+
+	// Use provided client ID or fall back to config
+	clientID := tokenRequest.ClientID
+	if clientID == "" {
+		clientID = oauth2Config.ClientID
+	}
+
+	// Build token request
+	data := url.Values{}
+	data.Set("grant_type", "authorization_code")
+	data.Set("code", tokenRequest.Code)
+	data.Set("redirect_uri", tokenRequest.RedirectURI)
+	data.Set("client_id", clientID)
+	data.Set("client_secret", oauth2Config.ClientSecret)
+	data.Set("audience", "https://calorie-gpt-api")
+	data.Set("scope", "openid profile email offline_access")
+	data.Set("response_type", "token id_token")
+	data.Set("token_type", "JWT")
+
+	// Create token request
+	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		log.Printf("[OAuth2] Failed to create token request")
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":             "server_error",
+			"error_description": "Failed to create token request",
+		})
+		return
+	}
+
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	// Send token request
+	client := &http.Client{Timeout: 10 * time.Second} // Add timeout
+	resp, err := client.Do(tokenReq)
+	if err != nil {
+		log.Printf("[OAuth2] Token request failed")
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":             "server_error",
+			"error_description": "Failed to exchange code for token",
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	rawBody, err = io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("[OAuth2] Failed to read response body")
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":             "server_error",
+			"error_description": "Failed to read token response",
+		})
+		return
+	}
+
+	// Log Auth0's raw response
+	log.Printf("[OAuth2] Auth0 response status: %d", resp.StatusCode)
+	log.Printf("[OAuth2] Auth0 response headers: %+v", resp.Header)
+	log.Printf("[OAuth2] Auth0 response body: %s", string(rawBody))
+
+	// Check if Auth0 returned an error
+	if resp.StatusCode != http.StatusOK {
+		var errorResponse struct {
+			Error            string `json:"error"`
+			ErrorDescription string `json:"error_description"`
+		}
+		if err := json.Unmarshal(rawBody, &errorResponse); err != nil {
+			c.Header("Content-Type", "application/json")
+			c.JSON(resp.StatusCode, gin.H{
+				"error":             "server_error",
+				"error_description": "Failed to parse error response from Auth0",
+			})
+			return
+		}
+		c.Header("Content-Type", "application/json")
+		c.JSON(resp.StatusCode, errorResponse)
+		return
+	}
+
+	// Forward Auth0's response
+	c.Header("Content-Type", "application/json")
+	c.Data(http.StatusOK, "application/json", rawBody)
 }
 
 func main() {
