@@ -720,54 +720,36 @@ func initOAuth2Config() {
 	}
 }
 
+func generateNonce() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return base64.URLEncoding.EncodeToString(b)
+}
+
 func handleOAuth2Authorize(c *gin.Context) {
-	// Check if state was passed in query parameters
-	state := c.Query("state")
-	if state == "" {
-		state = uuid.New().String()
-		log.Printf("[OAuth2] Generated new state: %s", state)
-	} else {
-		log.Printf("[OAuth2] Using provided state: %s", state)
-	}
+	// Generate state and nonce
+	state := uuid.New().String()
+	nonce := generateNonce()
 
-	redirectURI := c.Query("redirect_uri")
-	if redirectURI == "" {
-		redirectURI = "/"
-	}
-
-	clientID := c.Query("client_id")
-	if clientID == "" {
-		clientID = oauth2Config.ClientID
-	}
-
-	scopes := c.Query("scope")
-	if scopes == "" {
-		scopes = strings.Join(oauth2Config.Scopes, " ")
-	}
-
-	// Get the domain from the request
+	// Store state and nonce in secure cookies
 	domain := c.Request.Host
 	if strings.Contains(domain, ":") {
 		domain = strings.Split(domain, ":")[0]
 	}
-
-	log.Printf("[OAuth2] Setting cookies for domain: %s", domain)
-
-	// Store state and redirect_uri in cookies with more permissive settings
 	c.SetSameSite(http.SameSiteLaxMode)
-	// Set cookies with less restrictive settings for testing
-	c.SetCookie("oauth_state", state, 3600, "/", "", false, false)              // Remove Secure and HttpOnly for testing
-	c.SetCookie("oauth_redirect_uri", redirectURI, 3600, "/", "", false, false) // Remove Secure and HttpOnly for testing
+	c.SetCookie("oauth_state", state, 3600, "/", domain, true, true)
+	c.SetCookie("oauth_nonce", nonce, 3600, "/", domain, true, true)
 
 	// Build authorization URL with all necessary parameters
 	params := url.Values{}
-	params.Set("client_id", clientID)
-	params.Set("redirect_uri", redirectURI)
+	params.Set("client_id", oauth2Config.ClientID)
+	params.Set("redirect_uri", oauth2Config.RedirectURI)
 	params.Set("response_type", "code id_token")
-	params.Set("scope", scopes)
+	params.Set("scope", strings.Join(oauth2Config.Scopes, " "))
 	params.Set("state", state)
-	// params.Set("audience", "https://dev-lk0vcub54idn0l5c.us.auth0.com/api/v2/")
+	params.Set("nonce", nonce)
 
+	// Redirect to Auth0
 	authURL := oauth2Config.AuthURL + "?" + params.Encode()
 	log.Printf("[OAuth2] Redirecting to Auth0 with state: %s", state)
 
@@ -776,79 +758,55 @@ func handleOAuth2Authorize(c *gin.Context) {
 }
 
 func handleOAuth2Callback(c *gin.Context) {
-	code := c.Query("code")
-	state := c.Query("state")
-
-	log.Printf("[OAuth2] Callback received - Code: %s, State: %s", code, state)
-
-	// Log all request headers
-	for name, values := range c.Request.Header {
-		log.Printf("[OAuth2] Header %s: %v", name, values)
-	}
-
-	// Log all cookies
-	for _, cookie := range c.Request.Cookies() {
-		log.Printf("[OAuth2] Cookie found - Name: %s, Value: %s, Domain: %s, Path: %s",
-			cookie.Name, cookie.Value, cookie.Domain, cookie.Path)
-	}
-
-	// Verify state from cookie with detailed logging
-	storedState, err := c.Cookie("oauth_state")
+	// Get state and nonce from cookies
+	state, err := c.Cookie("oauth_state")
 	if err != nil {
-		log.Printf("[OAuth2] Error getting state cookie: %v", err)
-		// Try to get raw cookie
-		if rawCookie, err := c.Request.Cookie("oauth_state"); err == nil {
-			log.Printf("[OAuth2] Raw cookie found - Name: %s, Value: %s, Domain: %s, Path: %s",
-				rawCookie.Name, rawCookie.Value, rawCookie.Domain, rawCookie.Path)
-		}
-	}
-	log.Printf("[OAuth2] Stored state: %s, Received state: %s", storedState, state)
-
-	if state == "" || state != storedState {
-		log.Printf("[OAuth2] State mismatch - Got: %s, Expected: %s", state, storedState)
-		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid state parameter",
-			"details": gin.H{
-				"received_state": state,
-				"stored_state":   storedState,
-			},
-		})
+		log.Printf("[OAuth2] Missing state cookie: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing state"})
 		return
 	}
 
-	// Get the domain from the request
+	nonce, err := c.Cookie("oauth_nonce")
+	if err != nil {
+		log.Printf("[OAuth2] Missing nonce cookie: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing nonce"})
+		return
+	}
+
+	// Clear cookies
 	domain := c.Request.Host
 	if strings.Contains(domain, ":") {
 		domain = strings.Split(domain, ":")[0]
 	}
-
-	// Get stored redirect_uri
-	redirectURI, _ := c.Cookie("oauth_redirect_uri")
-	if redirectURI == "" {
-		redirectURI = "/"
-	}
-
-	// Clear the cookies with secure settings
 	c.SetSameSite(http.SameSiteLaxMode)
 	c.SetCookie("oauth_state", "", -1, "/", domain, true, true)
-	c.SetCookie("oauth_redirect_uri", "", -1, "/", domain, true, true)
+	c.SetCookie("oauth_nonce", "", -1, "/", domain, true, true)
+
+	// Verify state
+	if c.Query("state") != state {
+		log.Printf("[OAuth2] State mismatch")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid state"})
+		return
+	}
 
 	// Exchange code for token with all necessary parameters
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
-	data.Set("code", code)
-	data.Set("redirect_uri", redirectURI)
+	data.Set("code", c.Query("code"))
+	data.Set("redirect_uri", oauth2Config.RedirectURI)
 	data.Set("client_id", oauth2Config.ClientID)
 	data.Set("client_secret", oauth2Config.ClientSecret)
-	data.Set("response_type", "token id_token")
+	data.Set("nonce", nonce)
 
 	// Create token request
 	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
-		log.Printf("[OAuth2] Failed to create token request") // Don't log error details
+		log.Printf("[OAuth2] Failed to create token request")
 		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create token request"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":             "server_error",
+			"error_description": "Failed to create token request",
+		})
 		return
 	}
 
@@ -858,9 +816,12 @@ func handleOAuth2Callback(c *gin.Context) {
 	client := &http.Client{Timeout: 10 * time.Second} // Add timeout
 	resp, err := client.Do(tokenReq)
 	if err != nil {
-		log.Printf("[OAuth2] Token request failed") // Don't log error details
+		log.Printf("[OAuth2] Token request failed")
 		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to exchange code for token"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":             "server_error",
+			"error_description": "Failed to exchange code for token",
+		})
 		return
 	}
 	defer resp.Body.Close()
@@ -868,9 +829,12 @@ func handleOAuth2Callback(c *gin.Context) {
 	// Read response
 	rawBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("[OAuth2] Failed to read response body") // Don't log error details
+		log.Printf("[OAuth2] Failed to read response body")
 		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read token response"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":             "server_error",
+			"error_description": "Failed to read token response",
+		})
 		return
 	}
 
