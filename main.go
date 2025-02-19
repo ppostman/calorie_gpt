@@ -837,23 +837,11 @@ func handleOAuth2Callback(c *gin.Context) {
 	// Exchange code for token with all necessary parameters
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
+	data.Set("code", code)
+	data.Set("redirect_uri", redirectURI)
 	data.Set("client_id", oauth2Config.ClientID)
 	data.Set("client_secret", oauth2Config.ClientSecret)
-	data.Set("code", code)
-	data.Set("redirect_uri", oauth2Config.RedirectURI)
-
-	// Get the code verifier from cookie
-	codeVerifier, err := c.Cookie("code_verifier")
-	if err != nil || codeVerifier == "" {
-		log.Printf("[OAuth2] Missing code verifier: %v", err)
-		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing code verifier"})
-		return
-	}
-	data.Set("code_verifier", codeVerifier)
-
-	// Clear code verifier cookie
-	c.SetCookie("code_verifier", "", -1, "/", domain, true, true)
+	data.Set("response_type", "token id_token")
 
 	// Create token request
 	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, strings.NewReader(data.Encode()))
@@ -864,11 +852,9 @@ func handleOAuth2Callback(c *gin.Context) {
 		return
 	}
 
-	// Set proper headers
 	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	tokenReq.Header.Set("Accept", "application/json")
 
-	// Make the request
+	// Send token request
 	client := &http.Client{Timeout: 10 * time.Second} // Add timeout
 	resp, err := client.Do(tokenReq)
 	if err != nil {
@@ -888,53 +874,33 @@ func handleOAuth2Callback(c *gin.Context) {
 		return
 	}
 
-	// Log raw token response for debugging
-	log.Printf("[OAuth2] Raw token response: %s", string(rawBody))
+	// Log Auth0's raw response
+	log.Printf("[OAuth2] Auth0 response status: %d", resp.StatusCode)
+	log.Printf("[OAuth2] Auth0 response headers: %+v", resp.Header)
+	log.Printf("[OAuth2] Auth0 response body: %s", string(rawBody))
 
-	// Parse response
-	var tokenResponse struct {
-		AccessToken  string `json:"access_token"`
-		TokenType    string `json:"token_type"`
-		IDToken      string `json:"id_token"`
-		ExpiresIn    int    `json:"expires_in"`
-		Scope        string `json:"scope"`
-		RefreshToken string `json:"refresh_token"`
-	}
-
-	if err := json.Unmarshal(rawBody, &tokenResponse); err != nil {
-		log.Printf("[OAuth2] Failed to parse token response") // Don't log error details
+	// Check if Auth0 returned an error
+	if resp.StatusCode != http.StatusOK {
+		var errorResponse struct {
+			Error            string `json:"error"`
+			ErrorDescription string `json:"error_description"`
+		}
+		if err := json.Unmarshal(rawBody, &errorResponse); err != nil {
+			c.Header("Content-Type", "application/json")
+			c.JSON(resp.StatusCode, gin.H{
+				"error":             "server_error",
+				"error_description": "Failed to parse error response from Auth0",
+			})
+			return
+		}
 		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse token response"})
+		c.JSON(resp.StatusCode, errorResponse)
 		return
 	}
 
-	// Validate that we received an ID token
-	if tokenResponse.IDToken == "" {
-		log.Printf("[OAuth2] No ID token received in response")
-		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "No ID token received from Auth0"})
-		return
-	}
-
-	// Add tokens to the redirect URL
-	redirectURL := redirectURI
-	if strings.Contains(redirectURL, "?") {
-		redirectURL += "&"
-	} else {
-		redirectURL += "?"
-	}
-
-	// Include both access token and ID token
-	redirectURL += fmt.Sprintf("access_token=%s&id_token=%s&token_type=Bearer&expires_in=%d",
-		url.QueryEscape(tokenResponse.AccessToken),
-		url.QueryEscape(tokenResponse.IDToken),
-		tokenResponse.ExpiresIn)
-
-	// Add SameSite cookie attribute for CSRF protection
-	c.SetSameSite(http.SameSiteStrictMode)
-
-	// Redirect to the original redirect_uri with tokens
-	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
+	// Forward Auth0's response
+	c.Header("Content-Type", "application/json")
+	c.Data(http.StatusOK, "application/json", rawBody)
 }
 
 func handleUserInfo(c *gin.Context) {
@@ -1079,6 +1045,7 @@ func handleTokenExchange(c *gin.Context) {
 	data.Set("redirect_uri", tokenRequest.RedirectURI)
 	data.Set("client_id", clientID)
 	data.Set("audience", "https://dev-lk0vcub54idn0l5c.us.auth0.com/api/v2/")
+	data.Set("response_type", "token id_token")
 
 	// Add client secret if provided
 	if tokenRequest.ClientSecret != "" {
