@@ -72,15 +72,6 @@ type OAuth2Config struct {
 	Scopes       []string
 }
 
-type Token struct {
-	AccessToken  string `json:"access_token"`
-	TokenType    string `json:"token_type"`
-	IDToken      string `json:"id_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int    `json:"expires_in"`
-	Scope        string `json:"scope"`
-}
-
 var (
 	db            *gorm.DB
 	oauth2Config  OAuth2Config
@@ -778,34 +769,106 @@ func handleOAuth2Callback(c *gin.Context) {
 		redirectURI = "/"
 	}
 
-	// Exchange the authorization code for tokens
-	codeVerifier, _ := c.Cookie("code_verifier")
-	token, err := exchangeCodeForToken(code, codeVerifier)
-	if err != nil {
-		log.Printf("[OAuth2] Token exchange error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to exchange code for token"})
-		return
-	}
-
 	// Clear the cookies with secure settings
 	c.SetSameSite(http.SameSiteLaxMode)
 	c.SetCookie("oauth_state", "", -1, "/", domain, true, true)
 	c.SetCookie("oauth_redirect_uri", "", -1, "/", domain, true, true)
+
+	// Exchange code for token with all necessary parameters
+	data := url.Values{}
+	data.Set("grant_type", "authorization_code")
+	data.Set("client_id", oauth2Config.ClientID)
+	data.Set("client_secret", oauth2Config.ClientSecret)
+	data.Set("code", code)
+	data.Set("redirect_uri", oauth2Config.RedirectURI)
+
+	// Get the code verifier from cookie
+	codeVerifier, err := c.Cookie("code_verifier")
+	if err != nil || codeVerifier == "" {
+		log.Printf("[OAuth2] Missing code verifier: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing code verifier"})
+		return
+	}
+	data.Set("code_verifier", codeVerifier)
+
+	// Clear code verifier cookie
 	c.SetCookie("code_verifier", "", -1, "/", domain, true, true)
 
-	// Return token information as JSON
-	c.JSON(http.StatusOK, gin.H{
-		"access_token":  token.AccessToken,
-		"token_type":    "Bearer",
-		"refresh_token": token.RefreshToken,
-		"expires_in":    token.ExpiresIn,
-	})
+	// Create token request
+	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		log.Printf("[OAuth2] Failed to create token request") // Don't log error details
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create token request"})
+		return
+	}
 
-	// Wait a brief moment for the JSON to be sent
-	time.Sleep(100 * time.Millisecond)
+	// Set proper headers
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	tokenReq.Header.Set("Accept", "application/json")
 
-	// Then redirect
-	c.Redirect(http.StatusTemporaryRedirect, redirectURI)
+	// Make the request
+	client := &http.Client{Timeout: 10 * time.Second} // Add timeout
+	resp, err := client.Do(tokenReq)
+	if err != nil {
+		log.Printf("[OAuth2] Token request failed") // Don't log error details
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to exchange code for token"})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("[OAuth2] Failed to read response body") // Don't log error details
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read token response"})
+		return
+	}
+
+	// Log raw token response for debugging
+	log.Printf("[OAuth2] Raw token response: %s", string(rawBody))
+
+	// Parse response
+	var tokenResponse struct {
+		AccessToken  string `json:"access_token"`
+		TokenType    string `json:"token_type"`
+		IDToken      string `json:"id_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		Scope        string `json:"scope"`
+		RefreshToken string `json:"refresh_token"`
+	}
+
+	if err := json.Unmarshal(rawBody, &tokenResponse); err != nil {
+		log.Printf("[OAuth2] Failed to parse token response") // Don't log error details
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse token response"})
+		return
+	}
+
+	// Validate that we received an ID token
+	if tokenResponse.IDToken == "" {
+		log.Printf("[OAuth2] No ID token received in response")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No ID token received from Auth0"})
+		return
+	}
+
+	// Add tokens to the redirect URL
+	redirectURL := redirectURI
+	if strings.Contains(redirectURL, "?") {
+		redirectURL += "&"
+	} else {
+		redirectURL += "?"
+	}
+
+	// Include both access token and ID token
+	redirectURL += fmt.Sprintf("access_token=%s&id_token=%s&token_type=Bearer&expires_in=%d",
+		url.QueryEscape(tokenResponse.AccessToken),
+		url.QueryEscape(tokenResponse.IDToken),
+		tokenResponse.ExpiresIn)
+
+	// Add SameSite cookie attribute for CSRF protection
+	c.SetSameSite(http.SameSiteStrictMode)
+
+	// Redirect to the original redirect_uri with tokens
+	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
 }
 
 func handleUserInfo(c *gin.Context) {
@@ -880,51 +943,6 @@ func generateCodeVerifier() string {
 func generateCodeChallenge(verifier string) string {
 	hash := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(hash[:])
-}
-
-func exchangeCodeForToken(code, codeVerifier string) (*Token, error) {
-	data := url.Values{}
-	data.Set("grant_type", "authorization_code")
-	data.Set("client_id", oauth2Config.ClientID)
-	data.Set("client_secret", oauth2Config.ClientSecret)
-	data.Set("code", code)
-	data.Set("redirect_uri", oauth2Config.RedirectURI)
-	data.Set("code_verifier", codeVerifier)
-
-	// Create token request
-	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, strings.NewReader(data.Encode()))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create token request: %v", err)
-	}
-
-	// Set proper headers
-	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	tokenReq.Header.Set("Accept", "application/json")
-
-	// Make the request
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(tokenReq)
-	if err != nil {
-		return nil, fmt.Errorf("token request failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// Read response
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read token response: %v", err)
-	}
-
-	// Log raw token response for debugging
-	log.Printf("[OAuth2] Raw token response: %s", string(body))
-
-	// Parse response
-	var token Token
-	if err := json.Unmarshal(body, &token); err != nil {
-		return nil, fmt.Errorf("failed to parse token response: %v", err)
-	}
-
-	return &token, nil
 }
 
 func main() {
