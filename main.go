@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -969,13 +970,13 @@ func handleTokenExchange(c *gin.Context) {
 		log.Printf("[OAuth2] Failed to read request body: %v", err)
 		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "invalid_request",
+			"error":             "invalid_request",
 			"error_description": "Failed to read request body",
 		})
 		return
 	}
 	log.Printf("[OAuth2] Token request body: %s", string(rawBody))
-	
+
 	// Restore the body for binding
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(rawBody))
 
@@ -991,7 +992,7 @@ func handleTokenExchange(c *gin.Context) {
 		log.Printf("[OAuth2] Invalid token request: %v", err)
 		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "invalid_request",
+			"error":             "invalid_request",
 			"error_description": "Invalid request parameters",
 		})
 		return
@@ -1001,7 +1002,7 @@ func handleTokenExchange(c *gin.Context) {
 	if tokenRequest.GrantType != "authorization_code" {
 		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "unsupported_grant_type",
+			"error":             "unsupported_grant_type",
 			"error_description": "Only authorization_code grant type is supported",
 		})
 		return
@@ -1031,7 +1032,7 @@ func handleTokenExchange(c *gin.Context) {
 		log.Printf("[OAuth2] Failed to create token request")
 		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "server_error",
+			"error":             "server_error",
 			"error_description": "Failed to create token request",
 		})
 		return
@@ -1046,7 +1047,7 @@ func handleTokenExchange(c *gin.Context) {
 		log.Printf("[OAuth2] Token request failed")
 		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "server_error",
+			"error":             "server_error",
 			"error_description": "Failed to exchange code for token",
 		})
 		return
@@ -1059,7 +1060,7 @@ func handleTokenExchange(c *gin.Context) {
 		log.Printf("[OAuth2] Failed to read response body")
 		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "server_error",
+			"error":             "server_error",
 			"error_description": "Failed to read token response",
 		})
 		return
@@ -1074,7 +1075,7 @@ func handleTokenExchange(c *gin.Context) {
 		if err := json.Unmarshal(rawBody, &errorResponse); err != nil {
 			c.Header("Content-Type", "application/json")
 			c.JSON(resp.StatusCode, gin.H{
-				"error": "server_error",
+				"error":             "server_error",
 				"error_description": "Failed to parse error response from Auth0",
 			})
 			return
