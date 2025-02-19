@@ -757,6 +757,7 @@ func handleOAuth2Callback(c *gin.Context) {
 
 	if state == "" || state != storedState {
 		log.Printf("[OAuth2] State mismatch - Got: %s, Expected: %s", state, storedState)
+		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Invalid state parameter",
 			"details": gin.H{
@@ -796,6 +797,7 @@ func handleOAuth2Callback(c *gin.Context) {
 	codeVerifier, err := c.Cookie("code_verifier")
 	if err != nil || codeVerifier == "" {
 		log.Printf("[OAuth2] Missing code verifier: %v", err)
+		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing code verifier"})
 		return
 	}
@@ -808,6 +810,7 @@ func handleOAuth2Callback(c *gin.Context) {
 	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		log.Printf("[OAuth2] Failed to create token request") // Don't log error details
+		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create token request"})
 		return
 	}
@@ -821,6 +824,7 @@ func handleOAuth2Callback(c *gin.Context) {
 	resp, err := client.Do(tokenReq)
 	if err != nil {
 		log.Printf("[OAuth2] Token request failed") // Don't log error details
+		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to exchange code for token"})
 		return
 	}
@@ -830,6 +834,7 @@ func handleOAuth2Callback(c *gin.Context) {
 	rawBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Printf("[OAuth2] Failed to read response body") // Don't log error details
+		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read token response"})
 		return
 	}
@@ -849,6 +854,7 @@ func handleOAuth2Callback(c *gin.Context) {
 
 	if err := json.Unmarshal(rawBody, &tokenResponse); err != nil {
 		log.Printf("[OAuth2] Failed to parse token response") // Don't log error details
+		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse token response"})
 		return
 	}
@@ -856,6 +862,7 @@ func handleOAuth2Callback(c *gin.Context) {
 	// Validate that we received an ID token
 	if tokenResponse.IDToken == "" {
 		log.Printf("[OAuth2] No ID token received in response")
+		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "No ID token received from Auth0"})
 		return
 	}
