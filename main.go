@@ -774,7 +774,7 @@ func handleOAuth2Authorize(c *gin.Context) {
 	params.Set("response_type", "code")
 	params.Set("scope", scope)
 	params.Set("state", state)
-	params.Set("nonce", nonce)
+	// params.Set("nonce", nonce)
 
 	// Redirect to Auth0
 	authURL := oauth2Config.AuthURL + "?" + params.Encode()
@@ -1041,9 +1041,7 @@ func handleTokenExchange(c *gin.Context) {
 	data.Set("client_id", clientID)
 	data.Set("client_secret", oauth2Config.ClientSecret)
 	data.Set("audience", "https://calorie-gpt-api")
-	data.Set("scope", "openid profile email offline_access")
-	data.Set("response_type", "token id_token")
-	data.Set("token_type", "JWT")
+	data.Set("scope", "openid profile email")
 
 	// Create token request
 	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, strings.NewReader(data.Encode()))
