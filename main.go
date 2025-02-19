@@ -78,6 +78,7 @@ var (
 	jwksCache     = make(map[string]*rsa.PublicKey)
 	jwksCacheMu   sync.RWMutex
 	jwksCacheTime time.Time
+	publicKeys   = make(map[string]*rsa.PublicKey)
 )
 
 func createDailyLimit(c *gin.Context) {
@@ -640,7 +641,75 @@ func initDB() {
 	log.Println("Database initialized successfully")
 }
 
+func fetchJWKS() error {
+	resp, err := http.Get("https://dev-lk0vcub54idn0l5c.us.auth0.com/.well-known/jwks.json")
+	if err != nil {
+		return fmt.Errorf("failed to fetch JWKS: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var jwks struct {
+		Keys []struct {
+			Kid string   `json:"kid"`
+			Kty string   `json:"kty"`
+			N   string   `json:"n"`
+			E   string   `json:"e"`
+			Use string   `json:"use"`
+			X5c []string `json:"x5c"`
+		} `json:"keys"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
+		return fmt.Errorf("failed to decode JWKS: %v", err)
+	}
+
+	for _, key := range jwks.Keys {
+		if key.Kty != "RSA" || key.Use != "sig" {
+			continue
+		}
+
+		// Decode the public key components
+		n, err := base64.RawURLEncoding.DecodeString(key.N)
+		if err != nil {
+			log.Printf("[JWKS] Failed to decode key modulus: %v", err)
+			continue
+		}
+
+		e, err := base64.RawURLEncoding.DecodeString(key.E)
+		if err != nil {
+			log.Printf("[JWKS] Failed to decode key exponent: %v", err)
+			continue
+		}
+
+		// Convert exponent bytes to int
+		var eInt int
+		for i := 0; i < len(e); i++ {
+			eInt = eInt<<8 + int(e[i])
+		}
+
+		// Create RSA public key
+		publicKey := &rsa.PublicKey{
+			N: new(big.Int).SetBytes(n),
+			E: eInt,
+		}
+
+		publicKeys[key.Kid] = publicKey
+		log.Printf("[JWKS] Added public key with kid: %s", key.Kid)
+	}
+
+	if len(publicKeys) == 0 {
+		return fmt.Errorf("no valid RSA keys found in JWKS")
+	}
+
+	return nil
+}
+
 func initOAuth2Config() {
+	// Fetch JWKS on startup
+	if err := fetchJWKS(); err != nil {
+		log.Printf("[JWKS] Initial JWKS fetch failed: %v", err)
+	}
+
 	oauth2Config = OAuth2Config{
 		ClientID:     os.Getenv("AUTH0_CLIENT_ID"),
 		ClientSecret: os.Getenv("AUTH0_CLIENT_SECRET"),
