@@ -471,45 +471,62 @@ func getPublicKey(token *jwt.Token) (*rsa.PublicKey, error) {
 
 func authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Get token from Authorization header
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.JSON(401, gin.H{"error": "Authorization header is required"})
+			log.Printf("[Auth] No Authorization header found")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "No authorization header"})
 			c.Abort()
 			return
 		}
 
-		// Extract bearer token
-		if !strings.HasPrefix(authHeader, "Bearer ") {
-			c.JSON(401, gin.H{"error": "Invalid authorization header format"})
+		// Extract token from Bearer scheme
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			log.Printf("[Auth] Invalid Authorization header format: %s", authHeader)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header format"})
 			c.Abort()
 			return
 		}
 
-		tokenString := authHeader[7:]
-		if tokenString == "" {
-			c.JSON(401, gin.H{"error": "Invalid token"})
-			c.Abort()
-			return
-		}
+		tokenString := parts[1]
+		log.Printf("[Auth] Validating token: %s", tokenString)
 
-		// Parse and validate the JWT
+		// Parse and validate token
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			// Verify the token signing method is RS256
+			// Validate signing method
 			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+				log.Printf("[Auth] Unexpected signing method: %v", token.Header["alg"])
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
 
-			return getPublicKey(token)
+			// Get key ID from token header
+			kid, ok := token.Header["kid"].(string)
+			if !ok {
+				log.Printf("[Auth] No kid found in token header")
+				return nil, fmt.Errorf("no kid found in token header")
+			}
+
+			// Get public key for this kid
+			key, ok := publicKeys[kid]
+			if !ok {
+				log.Printf("[Auth] No public key found for kid: %s", kid)
+				return nil, fmt.Errorf("no public key found for kid: %s", kid)
+			}
+
+			return key, nil
 		})
 
 		if err != nil {
-			c.JSON(401, gin.H{"error": "Invalid token: " + err.Error()})
+			log.Printf("[Auth] Token validation failed: %v", err)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 			c.Abort()
 			return
 		}
 
 		if !token.Valid {
-			c.JSON(401, gin.H{"error": "Invalid token"})
+			log.Printf("[Auth] Token is invalid")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			c.Abort()
 			return
 		}
@@ -517,54 +534,17 @@ func authMiddleware() gin.HandlerFunc {
 		// Extract claims
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
-			c.JSON(401, gin.H{"error": "Invalid token claims"})
+			log.Printf("[Auth] Failed to extract claims from token")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Failed to extract claims"})
 			c.Abort()
 			return
 		}
 
-		// Verify token hasn't expired
-		if exp, ok := claims["exp"].(float64); ok {
-			if time.Now().Unix() > int64(exp) {
-				c.JSON(401, gin.H{"error": "Token has expired"})
-				c.Abort()
-				return
-			}
-		}
+		// Log claims for debugging
+		log.Printf("[Auth] Token claims: %+v", claims)
 
-		// Verify audience
-		if aud, ok := claims["aud"].([]interface{}); ok {
-			validAud := false
-			for _, a := range aud {
-				if a.(string) == "https://dev-lk0vcub54idn0l5c.us.auth0.com/api/v2/" {
-					validAud = true
-					break
-				}
-			}
-			if !validAud {
-				c.JSON(401, gin.H{"error": "Invalid token audience"})
-				c.Abort()
-				return
-			}
-		}
-
-		// Verify issuer
-		if iss, ok := claims["iss"].(string); ok {
-			if iss != "https://dev-lk0vcub54idn0l5c.us.auth0.com/" {
-				c.JSON(401, gin.H{"error": "Invalid token issuer"})
-				c.Abort()
-				return
-			}
-		}
-
-		// Store user ID in context
-		if sub, ok := claims["sub"].(string); ok {
-			c.Set("userID", sub)
-		} else {
-			c.JSON(401, gin.H{"error": "Invalid token subject"})
-			c.Abort()
-			return
-		}
-
+		// Store claims in context
+		c.Set("user", claims)
 		c.Next()
 	}
 }
