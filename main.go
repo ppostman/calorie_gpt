@@ -1044,12 +1044,14 @@ func handleTokenExchange(c *gin.Context) {
 		ClientID     string
 		ClientSecret string
 		GrantType    string
+		Scope        string
 	}{
 		Code:         values.Get("code"),
 		RedirectURI:  values.Get("redirect_uri"),
 		ClientID:     values.Get("client_id"),
 		ClientSecret: values.Get("client_secret"),
 		GrantType:    values.Get("grant_type"),
+		Scope:        values.Get("scope"),
 	}
 
 	// Validate required fields
@@ -1082,6 +1084,13 @@ func handleTokenExchange(c *gin.Context) {
 		data.Set("client_secret", tokenRequest.ClientSecret)
 	}
 
+	// Add scopes if provided, otherwise use default scopes
+	if tokenRequest.Scope != "" {
+		data.Set("scope", tokenRequest.Scope)
+	} else {
+		data.Set("scope", strings.Join(oauth2Config.Scopes, " "))
+	}
+
 	// Create token request
 	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
@@ -1100,7 +1109,7 @@ func handleTokenExchange(c *gin.Context) {
 	client := &http.Client{Timeout: 10 * time.Second} // Add timeout
 	resp, err := client.Do(tokenReq)
 	if err != nil {
-		log.Printf("[OAuth2] Token request failed: %v", err)
+		log.Printf("[OAuth2] Token request failed")
 		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":             "server_error",
@@ -1111,9 +1120,9 @@ func handleTokenExchange(c *gin.Context) {
 	defer resp.Body.Close()
 
 	// Read response
-	respBody, err := io.ReadAll(resp.Body)
+	rawBody, err = io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("[OAuth2] Failed to read response body: %v", err)
+		log.Printf("[OAuth2] Failed to read response body")
 		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":             "server_error",
@@ -1122,85 +1131,28 @@ func handleTokenExchange(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[OAuth2] Auth0 token response: %s", string(respBody))
-
-	// Parse Auth0's response
-	var tokenResponse struct {
-		AccessToken string `json:"access_token"`
-		IDToken    string `json:"id_token"`
-		TokenType  string `json:"token_type"`
-	}
-
-	if err := json.Unmarshal(respBody, &tokenResponse); err != nil {
-		log.Printf("[OAuth2] Failed to parse token response: %v", err)
+	// Check if Auth0 returned an error
+	if resp.StatusCode != http.StatusOK {
+		var errorResponse struct {
+			Error            string `json:"error"`
+			ErrorDescription string `json:"error_description"`
+		}
+		if err := json.Unmarshal(rawBody, &errorResponse); err != nil {
+			c.Header("Content-Type", "application/json")
+			c.JSON(resp.StatusCode, gin.H{
+				"error":             "server_error",
+				"error_description": "Failed to parse error response from Auth0",
+			})
+			return
+		}
 		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":             "server_error",
-			"error_description": "Failed to parse token response",
-		})
+		c.JSON(resp.StatusCode, errorResponse)
 		return
 	}
 
-	// Get user profile using the access token
-	userReq, err := http.NewRequest("GET", "https://dev-lk0vcub54idn0l5c.us.auth0.com/userinfo", nil)
-	if err != nil {
-		log.Printf("[OAuth2] Failed to create userinfo request: %v", err)
-		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":             "server_error",
-			"error_description": "Failed to create userinfo request",
-		})
-		return
-	}
-	userReq.Header.Set("Authorization", "Bearer "+tokenResponse.AccessToken)
-
-	// Get user profile
-	userResp, err := client.Do(userReq)
-	if err != nil {
-		log.Printf("[OAuth2] Userinfo request failed: %v", err)
-		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":             "server_error",
-			"error_description": "Failed to get user profile",
-		})
-		return
-	}
-	defer userResp.Body.Close()
-
-	// Read user profile
-	userBody, err := io.ReadAll(userResp.Body)
-	if err != nil {
-		log.Printf("[OAuth2] Failed to read userinfo response: %v", err)
-		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":             "server_error",
-			"error_description": "Failed to read user profile",
-		})
-		return
-	}
-
-	log.Printf("[OAuth2] User profile response: %s", string(userBody))
-
-	// Parse user profile
-	var userProfile map[string]interface{}
-	if err := json.Unmarshal(userBody, &userProfile); err != nil {
-		log.Printf("[OAuth2] Failed to parse user profile: %v", err)
-		c.Header("Content-Type", "application/json")
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":             "server_error",
-			"error_description": "Failed to parse user profile",
-		})
-		return
-	}
-
-	// Return combined response
+	// Forward Auth0's response
 	c.Header("Content-Type", "application/json")
-	c.JSON(http.StatusOK, gin.H{
-		"access_token":  tokenResponse.AccessToken,
-		"id_token":     tokenResponse.IDToken,
-		"token_type":   tokenResponse.TokenType,
-		"profile_data": userProfile,
-	})
+	c.Data(http.StatusOK, "application/json", rawBody)
 }
 
 func main() {
