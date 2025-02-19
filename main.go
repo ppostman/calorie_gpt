@@ -78,7 +78,7 @@ var (
 	jwksCache     = make(map[string]*rsa.PublicKey)
 	jwksCacheMu   sync.RWMutex
 	jwksCacheTime time.Time
-	publicKeys   = make(map[string]*rsa.PublicKey)
+	publicKeys    = make(map[string]*rsa.PublicKey)
 )
 
 func createDailyLimit(c *gin.Context) {
@@ -727,6 +727,22 @@ func generateNonce() string {
 }
 
 func handleOAuth2Authorize(c *gin.Context) {
+	// Get parameters from request, falling back to oauth2Config if not provided
+	clientID := c.Query("client_id")
+	if clientID == "" {
+		clientID = oauth2Config.ClientID
+	}
+
+	redirectURI := c.Query("redirect_uri")
+	if redirectURI == "" {
+		redirectURI = oauth2Config.RedirectURI
+	}
+
+	scope := c.Query("scope")
+	if scope == "" {
+		scope = strings.Join(oauth2Config.Scopes, " ")
+	}
+
 	// Check if state was provided in request
 	state := c.Query("state")
 	if state == "" {
@@ -753,10 +769,10 @@ func handleOAuth2Authorize(c *gin.Context) {
 
 	// Build authorization URL with all necessary parameters
 	params := url.Values{}
-	params.Set("client_id", oauth2Config.ClientID)
-	params.Set("redirect_uri", oauth2Config.RedirectURI)
+	params.Set("client_id", clientID)
+	params.Set("redirect_uri", redirectURI)
 	params.Set("response_type", "code")
-	params.Set("scope", strings.Join(oauth2Config.Scopes, " "))
+	params.Set("scope", scope)
 	params.Set("state", state)
 	params.Set("nonce", nonce)
 
