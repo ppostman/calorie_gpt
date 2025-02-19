@@ -744,7 +744,8 @@ func handleOAuth2Authorize(c *gin.Context) {
 	params := url.Values{}
 	params.Set("client_id", oauth2Config.ClientID)
 	params.Set("redirect_uri", oauth2Config.RedirectURI)
-	params.Set("response_type", "code id_token")
+	params.Set("response_type", "code")  // Changed from "code id_token"
+	params.Set("response_mode", "query") // Force query parameters
 	params.Set("scope", strings.Join(oauth2Config.Scopes, " "))
 	params.Set("state", state)
 	params.Set("nonce", nonce)
