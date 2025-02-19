@@ -976,20 +976,30 @@ func handleTokenExchange(c *gin.Context) {
 		return
 	}
 	log.Printf("[OAuth2] Token request body: %s", string(rawBody))
-
-	// Restore the body for binding
+	
+	// Restore the body for parsing
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(rawBody))
 
 	var tokenRequest struct {
-		Code         string `json:"code" binding:"required"`
-		RedirectURI  string `json:"redirect_uri" binding:"required"`
-		ClientID     string `json:"client_id"`
-		ClientSecret string `json:"client_secret"`
-		GrantType    string `json:"grant_type" binding:"required"`
+		Code         string `json:"code" form:"code" binding:"required"`
+		RedirectURI  string `json:"redirect_uri" form:"redirect_uri" binding:"required"`
+		ClientID     string `json:"client_id" form:"client_id"`
+		ClientSecret string `json:"client_secret" form:"client_secret"`
+		GrantType    string `json:"grant_type" form:"grant_type" binding:"required"`
 	}
 
-	if err := c.ShouldBindJSON(&tokenRequest); err != nil {
-		log.Printf("[OAuth2] Invalid token request: %v", err)
+	// Try to bind based on content type
+	contentType := c.GetHeader("Content-Type")
+	var bindErr error
+	if strings.Contains(contentType, "application/json") {
+		bindErr = c.ShouldBindJSON(&tokenRequest)
+	} else {
+		// Default to form data
+		bindErr = c.ShouldBind(&tokenRequest)
+	}
+
+	if bindErr != nil {
+		log.Printf("[OAuth2] Invalid token request: %v", bindErr)
 		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":             "invalid_request",
@@ -997,7 +1007,7 @@ func handleTokenExchange(c *gin.Context) {
 		})
 		return
 	}
-
+	
 	// Validate grant type
 	if tokenRequest.GrantType != "authorization_code" {
 		c.Header("Content-Type", "application/json")
