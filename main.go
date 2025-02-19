@@ -772,9 +772,10 @@ func handleOAuth2Authorize(c *gin.Context) {
 	params.Set("client_id", clientID)
 	params.Set("redirect_uri", redirectURI)
 	params.Set("response_type", "code")
-	params.Set("scope", scope)
+	params.Set("scope", "openid profile email")
+	params.Set("audience", "https://calorie-gpt-api")
 	params.Set("state", state)
-	// params.Set("nonce", nonce)
+	params.Set("nonce", nonce)
 
 	// Redirect to Auth0
 	authURL := oauth2Config.AuthURL + "?" + params.Encode()
@@ -824,9 +825,7 @@ func handleOAuth2Callback(c *gin.Context) {
 	data.Set("client_id", oauth2Config.ClientID)
 	data.Set("client_secret", oauth2Config.ClientSecret)
 	data.Set("audience", "https://calorie-gpt-api")
-	data.Set("scope", "openid profile email offline_access")
-	data.Set("response_type", "token id_token")
-	data.Set("token_type", "JWT")
+	data.Set("scope", "openid profile email")
 	data.Set("nonce", nonce)
 
 	// Create token request
