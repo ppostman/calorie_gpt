@@ -823,6 +823,8 @@ func handleOAuth2Callback(c *gin.Context) {
 	data.Set("redirect_uri", oauth2Config.RedirectURI)
 	data.Set("client_id", oauth2Config.ClientID)
 	data.Set("client_secret", oauth2Config.ClientSecret)
+	data.Set("audience", "https://calorie-gpt.onrender.com")
+	data.Set("scope", "openid profile email offline_access")
 	data.Set("nonce", nonce)
 
 	// Create token request
@@ -1035,23 +1037,9 @@ func handleTokenExchange(c *gin.Context) {
 	data.Set("code", tokenRequest.Code)
 	data.Set("redirect_uri", tokenRequest.RedirectURI)
 	data.Set("client_id", clientID)
-	data.Set("audience", "https://dev-lk0vcub54idn0l5c.us.auth0.com/api/v2/")
-	data.Set("response_type", "token id_token")
-
-	// Add client secret if provided
-	if tokenRequest.ClientSecret != "" {
-		data.Set("client_secret", tokenRequest.ClientSecret)
-	}
-
-	// Add scopes if provided, otherwise use scopes from auth0-config.js
-	if tokenRequest.Scope != "" {
-		data.Set("scope", tokenRequest.Scope)
-		log.Printf("[OAuth2] Using provided scope: %s", tokenRequest.Scope)
-	} else {
-		defaultScope := "openid profile email"
-		data.Set("scope", defaultScope)
-		log.Printf("[OAuth2] Using default scope from auth0-config: %s", defaultScope)
-	}
+	data.Set("client_secret", oauth2Config.ClientSecret)
+	data.Set("audience", "https://calorie-gpt.onrender.com")
+	data.Set("scope", "openid profile email offline_access")
 
 	// Create token request
 	tokenReq, err := http.NewRequest("POST", oauth2Config.TokenURL, strings.NewReader(data.Encode()))
