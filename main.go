@@ -667,7 +667,7 @@ func initOAuth2Config() {
 		RedirectURI:  os.Getenv("AUTH0_REDIRECT_URI"),
 		AuthURL:      "https://dev-lk0vcub54idn0l5c.us.auth0.com/authorize",
 		TokenURL:     "https://dev-lk0vcub54idn0l5c.us.auth0.com/oauth/token",
-		Scopes:       []string{"openid", "profile", "email", "offline_access"},
+		Scopes:       []string{"openid", "profile", "email"},
 	}
 }
 
