@@ -4,7 +4,6 @@ const config = {
     scope: 'openid profile email',
     audience: 'https://dev-lk0vcub54idn0l5c.us.auth0.com/api/v2/',
     responseType: 'code',
-    responseMode: 'query',
 };
 
 export { config };

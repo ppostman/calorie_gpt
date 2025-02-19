@@ -726,82 +726,65 @@ func generateNonce() string {
 	return base64.URLEncoding.EncodeToString(b)
 }
 
-func getDomainFromRequest(c *gin.Context) string {
-	domain := c.Request.Host
-	if strings.Contains(domain, ":") {
-		domain = strings.Split(domain, ":")[0]
-	}
-	return domain
-}
-
 func handleOAuth2Authorize(c *gin.Context) {
 	// Generate state and nonce
 	state := uuid.New().String()
 	nonce := generateNonce()
 
-	// Get domain for cookies
-	domain := getDomainFromRequest(c)
-	log.Printf("[OAuth2] Setting cookies for domain: %s", domain)
-
-	// Set cookies with less restrictive settings for testing
+	// Store state and nonce in secure cookies
+	domain := c.Request.Host
+	if strings.Contains(domain, ":") {
+		domain = strings.Split(domain, ":")[0]
+	}
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie("oauth_state", state, 3600, "/", domain, false, false)
-	c.SetCookie("oauth_nonce", nonce, 3600, "/", domain, false, false)
+	c.SetCookie("oauth_state", state, 3600, "/", domain, true, true)
+	c.SetCookie("oauth_nonce", nonce, 3600, "/", domain, true, true)
 
 	// Build authorization URL with all necessary parameters
 	params := url.Values{}
 	params.Set("client_id", oauth2Config.ClientID)
 	params.Set("redirect_uri", oauth2Config.RedirectURI)
 	params.Set("response_type", "code")
-	params.Set("response_mode", "query")
 	params.Set("scope", strings.Join(oauth2Config.Scopes, " "))
 	params.Set("state", state)
 	params.Set("nonce", nonce)
 
-	// Log the state we're setting
-	log.Printf("[OAuth2] Generated state: %s", state)
-
 	// Redirect to Auth0
 	authURL := oauth2Config.AuthURL + "?" + params.Encode()
+	log.Printf("[OAuth2] Redirecting to Auth0 with state: %s", state)
+
+	// Redirect to Auth0 login page
 	c.Redirect(http.StatusTemporaryRedirect, authURL)
 }
 
 func handleOAuth2Callback(c *gin.Context) {
-	// Log received state
-	receivedState := c.Query("state")
-	log.Printf("[OAuth2] Received state in callback: %s", receivedState)
-
-	// Log all cookies for debugging
-	for _, cookie := range c.Request.Cookies() {
-		log.Printf("[OAuth2] Cookie found - Name: %s, Value: %s", cookie.Name, cookie.Value)
-	}
-
-	// Get state from cookie
+	// Get state and nonce from cookies
 	state, err := c.Cookie("oauth_state")
 	if err != nil {
-		log.Printf("[OAuth2] Failed to get state cookie: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing state cookie"})
+		log.Printf("[OAuth2] Missing state cookie: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing state"})
 		return
 	}
-	log.Printf("[OAuth2] State from cookie: %s", state)
 
-	// Get nonce from cookie
 	nonce, err := c.Cookie("oauth_nonce")
 	if err != nil {
-		log.Printf("[OAuth2] Failed to get nonce cookie: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing nonce cookie"})
+		log.Printf("[OAuth2] Missing nonce cookie: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing nonce"})
 		return
 	}
 
 	// Clear cookies
-	domain := getDomainFromRequest(c)
+	domain := c.Request.Host
+	if strings.Contains(domain, ":") {
+		domain = strings.Split(domain, ":")[0]
+	}
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie("oauth_state", "", -1, "/", domain, false, false)
-	c.SetCookie("oauth_nonce", "", -1, "/", domain, false, false)
+	c.SetCookie("oauth_state", "", -1, "/", domain, true, true)
+	c.SetCookie("oauth_nonce", "", -1, "/", domain, true, true)
 
 	// Verify state
-	if receivedState != state {
-		log.Printf("[OAuth2] State mismatch - Expected: %s, Got: %s", state, receivedState)
+	if c.Query("state") != state {
+		log.Printf("[OAuth2] State mismatch")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid state"})
 		return
 	}
