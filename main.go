@@ -672,7 +672,15 @@ func initOAuth2Config() {
 }
 
 func handleOAuth2Authorize(c *gin.Context) {
-	state := uuid.New().String()
+	// Check if state was passed in query parameters
+	state := c.Query("state")
+	if state == "" {
+		state = uuid.New().String()
+		log.Printf("[OAuth2] Generated new state: %s", state)
+	} else {
+		log.Printf("[OAuth2] Using provided state: %s", state)
+	}
+
 	redirectURI := c.Query("redirect_uri")
 	if redirectURI == "" {
 		redirectURI = "/"
