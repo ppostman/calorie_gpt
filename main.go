@@ -686,6 +686,16 @@ func handleOAuth2Authorize(c *gin.Context) {
 		redirectURI = "/"
 	}
 
+	clientID := c.Query("client_id")
+	if clientID == "" {
+		clientID = oauth2Config.ClientID
+	}
+
+	scopes := c.Query("scope")
+	if scopes == "" {
+		scopes = strings.Join(oauth2Config.Scopes, " ")
+	}
+
 	// Get the domain from the request
 	domain := c.Request.Host
 	if strings.Contains(domain, ":") {
@@ -703,9 +713,9 @@ func handleOAuth2Authorize(c *gin.Context) {
 	// Build authorization URL with all necessary parameters
 	params := url.Values{}
 	params.Set("response_type", "code")
-	params.Set("client_id", oauth2Config.ClientID)
-	params.Set("redirect_uri", oauth2Config.RedirectURI)
-	params.Set("scope", strings.Join(oauth2Config.Scopes, " "))
+	params.Set("client_id", clientID)
+	params.Set("redirect_uri", redirectURI)
+	params.Set("scope", scopes)
 	params.Set("state", state)
 	// params.Set("audience", "https://dev-lk0vcub54idn0l5c.us.auth0.com/api/v2/")
 
