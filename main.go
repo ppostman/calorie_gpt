@@ -1100,7 +1100,7 @@ func handleTokenExchange(c *gin.Context) {
 	client := &http.Client{Timeout: 10 * time.Second} // Add timeout
 	resp, err := client.Do(tokenReq)
 	if err != nil {
-		log.Printf("[OAuth2] Token request failed")
+		log.Printf("[OAuth2] Token request failed: %v", err)
 		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":             "server_error",
@@ -1111,9 +1111,9 @@ func handleTokenExchange(c *gin.Context) {
 	defer resp.Body.Close()
 
 	// Read response
-	rawBody, err = io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("[OAuth2] Failed to read response body")
+		log.Printf("[OAuth2] Failed to read response body: %v", err)
 		c.Header("Content-Type", "application/json")
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":             "server_error",
@@ -1122,28 +1122,85 @@ func handleTokenExchange(c *gin.Context) {
 		return
 	}
 
-	// Check if Auth0 returned an error
-	if resp.StatusCode != http.StatusOK {
-		var errorResponse struct {
-			Error            string `json:"error"`
-			ErrorDescription string `json:"error_description"`
-		}
-		if err := json.Unmarshal(rawBody, &errorResponse); err != nil {
-			c.Header("Content-Type", "application/json")
-			c.JSON(resp.StatusCode, gin.H{
-				"error":             "server_error",
-				"error_description": "Failed to parse error response from Auth0",
-			})
-			return
-		}
+	log.Printf("[OAuth2] Auth0 token response: %s", string(respBody))
+
+	// Parse Auth0's response
+	var tokenResponse struct {
+		AccessToken string `json:"access_token"`
+		IDToken    string `json:"id_token"`
+		TokenType  string `json:"token_type"`
+	}
+
+	if err := json.Unmarshal(respBody, &tokenResponse); err != nil {
+		log.Printf("[OAuth2] Failed to parse token response: %v", err)
 		c.Header("Content-Type", "application/json")
-		c.JSON(resp.StatusCode, errorResponse)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":             "server_error",
+			"error_description": "Failed to parse token response",
+		})
 		return
 	}
 
-	// Forward Auth0's response
+	// Get user profile using the access token
+	userReq, err := http.NewRequest("GET", "https://dev-lk0vcub54idn0l5c.us.auth0.com/userinfo", nil)
+	if err != nil {
+		log.Printf("[OAuth2] Failed to create userinfo request: %v", err)
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":             "server_error",
+			"error_description": "Failed to create userinfo request",
+		})
+		return
+	}
+	userReq.Header.Set("Authorization", "Bearer "+tokenResponse.AccessToken)
+
+	// Get user profile
+	userResp, err := client.Do(userReq)
+	if err != nil {
+		log.Printf("[OAuth2] Userinfo request failed: %v", err)
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":             "server_error",
+			"error_description": "Failed to get user profile",
+		})
+		return
+	}
+	defer userResp.Body.Close()
+
+	// Read user profile
+	userBody, err := io.ReadAll(userResp.Body)
+	if err != nil {
+		log.Printf("[OAuth2] Failed to read userinfo response: %v", err)
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":             "server_error",
+			"error_description": "Failed to read user profile",
+		})
+		return
+	}
+
+	log.Printf("[OAuth2] User profile response: %s", string(userBody))
+
+	// Parse user profile
+	var userProfile map[string]interface{}
+	if err := json.Unmarshal(userBody, &userProfile); err != nil {
+		log.Printf("[OAuth2] Failed to parse user profile: %v", err)
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":             "server_error",
+			"error_description": "Failed to parse user profile",
+		})
+		return
+	}
+
+	// Return combined response
 	c.Header("Content-Type", "application/json")
-	c.Data(http.StatusOK, "application/json", rawBody)
+	c.JSON(http.StatusOK, gin.H{
+		"access_token":  tokenResponse.AccessToken,
+		"id_token":     tokenResponse.IDToken,
+		"token_type":   tokenResponse.TokenType,
+		"profile_data": userProfile,
+	})
 }
 
 func main() {
