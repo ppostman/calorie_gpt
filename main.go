@@ -823,7 +823,7 @@ func handleOAuth2Callback(c *gin.Context) {
 	data.Set("redirect_uri", oauth2Config.RedirectURI)
 	data.Set("client_id", oauth2Config.ClientID)
 	data.Set("client_secret", oauth2Config.ClientSecret)
-	data.Set("audience", "https://calorie-gpt.onrender.com")
+	data.Set("audience", "https://dev-lk0vcub54idn0l5c.us.auth0.com/api/v2/")
 	data.Set("scope", "openid profile email offline_access")
 	data.Set("nonce", nonce)
 
@@ -1038,7 +1038,7 @@ func handleTokenExchange(c *gin.Context) {
 	data.Set("redirect_uri", tokenRequest.RedirectURI)
 	data.Set("client_id", clientID)
 	data.Set("client_secret", oauth2Config.ClientSecret)
-	data.Set("audience", "https://calorie-gpt.onrender.com")
+	data.Set("audience", "https://dev-lk0vcub54idn0l5c.us.auth0.com/api/v2/")
 	data.Set("scope", "openid profile email offline_access")
 
 	// Create token request
