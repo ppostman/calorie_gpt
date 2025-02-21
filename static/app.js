@@ -63,28 +63,30 @@ function showError(message) {
 // Login
 async function login() {
     try {
-        if (!auth0) {
-            throw new Error('Auth0 client not initialized');
-        }
-        await auth0.loginWithRedirect();
+        console.log('Starting login process...');
+        await auth0.loginWithRedirect({
+            authorizationParams: {
+                redirect_uri: window.location.origin
+            }
+        });
     } catch (err) {
-        console.error("Error during login:", err);
-        showError("Failed to start login process. Please try again.");
+        console.error('Login error:', err);
+        showError('Failed to log in. Please try again.');
     }
 }
 
 // Logout
 async function logout() {
     try {
-        if (!auth0) {
-            throw new Error('Auth0 client not initialized');
-        }
+        console.log('Starting logout process...');
         await auth0.logout({
-            returnTo: window.location.origin
+            logoutParams: {
+                returnTo: window.location.origin
+            }
         });
     } catch (err) {
-        console.error("Error during logout:", err);
-        showError("Failed to logout. Please try again.");
+        console.error('Logout error:', err);
+        showError('Failed to log out. Please try again.');
     }
 }
 
