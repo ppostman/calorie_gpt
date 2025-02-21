@@ -1344,6 +1344,11 @@ func main() {
 	r.StaticFile("/app.js", "./static/app.js")
 	r.StaticFile("/privacy-policy.html", "./static/privacy-policy.html")
 
+	// Auth0 callback handler
+	r.GET("/callback", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "index.html", nil)
+	})
+
 	// Protected API routes
 	api := r.Group("/")
 	api.Use(authMiddleware())

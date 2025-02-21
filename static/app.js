@@ -63,10 +63,10 @@ function showError(message) {
 // Login
 async function login() {
     try {
-        console.log('Starting login process...');
+        console.log('Starting login process...', window.REDIRECT_URI);
         await auth0.loginWithRedirect({
             authorizationParams: {
-                redirect_uri: window.location.origin
+                redirect_uri: window.REDIRECT_URI
             }
         });
     } catch (err) {
