@@ -376,7 +376,13 @@ async function deleteWeight(id) {
 }
 
 // Initialize the application
-window.addEventListener('load', initializeAuth);
+window.addEventListener('load', () => {
+    if (!window.AUTH0_CONFIG) {
+        showError('Failed to load authentication configuration. Please refresh the page.');
+        return;
+    }
+    initializeAuth();
+});
 
 // Show error message to user
 function showError(message) {
