@@ -41,7 +41,7 @@ async function handleAuthCallback() {
         const state = urlParams.get('state');
         
         // Exchange code for tokens
-        const response = await fetch('/token', {
+        const response = await fetch('/oauth2/token', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -76,7 +76,7 @@ async function handleAuthCallback() {
 // Fetch user info
 async function fetchUserInfo() {
     try {
-        const response = await fetch('/userinfo', {
+        const response = await fetch('/oauth2/userinfo', {
             headers: {
                 'Authorization': `Bearer ${accessToken}`
             }
@@ -109,7 +109,7 @@ async function login() {
             state: state
         });
 
-        window.location.href = `/authorize?${params.toString()}`;
+        window.location.href = `/oauth2/authorize?${params.toString()}`;
     } catch (err) {
         console.error('Login error:', err);
         showError('Failed to start login process. Please try again.');
