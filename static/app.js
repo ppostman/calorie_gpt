@@ -1,77 +1,118 @@
-// Auth0 configuration
-let auth0 = null;
+// Authentication state
 let isAuthenticated = false;
 let accessToken = null;
 let userProfile = null;
 
-// Initialize Auth0 client
-async function initializeAuth0() {
+// Initialize authentication state
+async function initializeAuth() {
     try {
-        auth0 = await window.auth0.createAuth0Client(window.AUTH0_CONFIG);
-
+        // Check if we have a valid token in localStorage
+        accessToken = localStorage.getItem('access_token');
+        if (accessToken) {
+            // Validate token and get user info
+            const user = await fetchUserInfo();
+            if (user) {
+                isAuthenticated = true;
+                userProfile = user;
+                await loadInitialData();
+            } else {
+                // Token is invalid, clear it
+                logout();
+            }
+        }
+        
         // Check for authentication callback
-        if (window.location.search.includes("code=") || 
-            window.location.search.includes("error=")) {
-            await auth0.handleRedirectCallback();
-            window.history.replaceState({}, document.title, window.location.pathname);
+        if (window.location.search.includes("code=")) {
+            await handleAuthCallback();
         }
 
-        isAuthenticated = await auth0.isAuthenticated();
         await updateUI();
-
-        if (isAuthenticated) {
-            accessToken = await auth0.getTokenSilently();
-            userProfile = await auth0.getUser();
-            await loadInitialData();
-        }
     } catch (err) {
-        console.error("Error initializing Auth0:", err);
+        console.error("Error initializing auth:", err);
         showError("Failed to initialize authentication. Please try again later.");
     }
 }
 
-// Update UI based on authentication state
-async function updateUI() {
+// Handle authentication callback
+async function handleAuthCallback() {
     try {
-        const authenticated = await auth0.isAuthenticated();
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        const state = urlParams.get('state');
         
-        document.getElementById("authenticated-view").classList.toggle("d-none", !authenticated);
-        document.getElementById("unauthenticated-view").classList.toggle("d-none", authenticated);
-        document.getElementById("login-section").classList.toggle("d-none", authenticated);
-        document.getElementById("user-section").classList.toggle("d-none", !authenticated);
+        // Exchange code for tokens
+        const response = await fetch('/token', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ code, state })
+        });
 
-        if (authenticated && userProfile) {
-            document.getElementById("welcome").textContent = `Welcome, ${userProfile.name || userProfile.email}!`;
+        if (!response.ok) {
+            throw new Error('Failed to exchange code for token');
         }
+
+        const data = await response.json();
+        
+        // Store tokens
+        localStorage.setItem('access_token', data.access_token);
+        accessToken = data.access_token;
+        
+        // Get user info
+        userProfile = await fetchUserInfo();
+        isAuthenticated = true;
+
+        // Clean up URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+        
+        await loadInitialData();
     } catch (err) {
-        console.error("Error updating UI:", err);
+        console.error('Auth callback error:', err);
+        showError('Authentication failed. Please try again.');
     }
 }
 
-// Show error message to user
-function showError(message) {
-    const errorDiv = document.createElement('div');
-    errorDiv.className = 'alert alert-danger alert-dismissible fade show';
-    errorDiv.role = 'alert';
-    errorDiv.innerHTML = `
-        ${message}
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-    `;
-    document.body.insertBefore(errorDiv, document.body.firstChild);
+// Fetch user info
+async function fetchUserInfo() {
+    try {
+        const response = await fetch('/userinfo', {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to fetch user info');
+        }
+
+        return await response.json();
+    } catch (err) {
+        console.error('Error fetching user info:', err);
+        return null;
+    }
 }
 
 // Login
 async function login() {
     try {
-        console.log('Starting login process...', window.REDIRECT_URI);
-        await auth0.loginWithRedirect({
-            authorizationParams: {
-                redirect_uri: window.REDIRECT_URI
-            }
+        console.log('Starting login process...');
+        const state = generateState();
+        localStorage.setItem('oauth_state', state);
+        
+        const params = new URLSearchParams({
+            client_id: window.AUTH0_CONFIG.clientId,
+            redirect_uri: window.location.origin,
+            response_type: 'code',
+            scope: 'openid profile email',
+            audience: window.AUTH0_CONFIG.audience,
+            state: state
         });
+
+        window.location.href = `/authorize?${params.toString()}`;
     } catch (err) {
         console.error('Login error:', err);
-        showError('Failed to log in. Please try again.');
+        showError('Failed to start login process. Please try again.');
     }
 }
 
@@ -79,14 +120,42 @@ async function login() {
 async function logout() {
     try {
         console.log('Starting logout process...');
-        await auth0.logout({
-            logoutParams: {
-                returnTo: window.location.origin
-            }
-        });
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('oauth_state');
+        accessToken = null;
+        userProfile = null;
+        isAuthenticated = false;
+        
+        await updateUI();
+        
+        // Redirect to home
+        window.location.href = '/';
     } catch (err) {
         console.error('Logout error:', err);
-        showError('Failed to log out. Please try again.');
+        showError('Failed to logout. Please try again.');
+    }
+}
+
+// Generate random state
+function generateState() {
+    const array = new Uint8Array(32);
+    window.crypto.getRandomValues(array);
+    return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+// Update UI based on authentication state
+async function updateUI() {
+    try {
+        document.getElementById("authenticated-view").classList.toggle("d-none", !isAuthenticated);
+        document.getElementById("unauthenticated-view").classList.toggle("d-none", isAuthenticated);
+        document.getElementById("login-section").classList.toggle("d-none", isAuthenticated);
+        document.getElementById("user-section").classList.toggle("d-none", !isAuthenticated);
+
+        if (isAuthenticated && userProfile) {
+            document.getElementById("welcome").textContent = `Welcome, ${userProfile.name || userProfile.email}!`;
+        }
+    } catch (err) {
+        console.error("Error updating UI:", err);
     }
 }
 
@@ -98,9 +167,9 @@ async function fetchWithAuth(url, options = {}) {
         }
 
         const headers = {
-            ...options.headers,
+            'Content-Type': 'application/json',
             'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
+            ...options.headers
         };
 
         const response = await fetch(url, {
@@ -109,20 +178,15 @@ async function fetchWithAuth(url, options = {}) {
         });
 
         if (response.status === 401) {
-            // Token might be expired, try to refresh
-            accessToken = await auth0.getTokenSilently();
-            headers.Authorization = `Bearer ${accessToken}`;
-            return await fetch(url, { ...options, headers });
-        }
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            // Token expired or invalid
+            logout();
+            throw new Error('Session expired. Please login again.');
         }
 
         return await response.json();
-    } catch (error) {
-        console.error('API call failed:', error);
-        throw error;
+    } catch (err) {
+        console.error('API call error:', err);
+        throw err;
     }
 }
 
@@ -312,4 +376,16 @@ async function deleteWeight(id) {
 }
 
 // Initialize the application
-window.addEventListener('load', initializeAuth0);
+window.addEventListener('load', initializeAuth);
+
+// Show error message to user
+function showError(message) {
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'alert alert-danger alert-dismissible fade show';
+    errorDiv.role = 'alert';
+    errorDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+    document.body.insertBefore(errorDiv, document.body.firstChild);
+}
