@@ -102,7 +102,7 @@ async function login() {
         
         const params = new URLSearchParams({
             client_id: window.AUTH0_CONFIG.clientId,
-            redirect_uri: window.location.origin,
+            redirect_uri: `${window.location.origin}/oauth2/callback`,
             response_type: 'code',
             scope: 'openid profile email',
             audience: window.AUTH0_CONFIG.audience,
