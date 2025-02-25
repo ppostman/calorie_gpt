@@ -375,6 +375,33 @@ async function deleteWeight(id) {
     }
 }
 
+// Handle AI response and execute API call
+async function handleAIResponse(response) {
+    try {
+        const aiResponse = JSON.parse(response);
+        
+        // Display AI message to user
+        addMessage('assistant', aiResponse.Message);
+        
+        // Make the API call using the provided URL, method, and payload
+        const apiResponse = await fetchWithAuth(aiResponse.URL, {
+            method: aiResponse.Method,
+            body: JSON.stringify(aiResponse.Payload)
+        });
+        
+        // Reload nutrition data after successful API call
+        if (apiResponse) {
+            await Promise.all([loadDailyCalories(), loadEntries()]);
+        }
+        
+        return true;
+    } catch (err) {
+        console.error('Error handling AI response:', err);
+        addMessage('assistant', 'Sorry, I encountered an error processing your request.');
+        return false;
+    }
+}
+
 // Initialize the application
 window.addEventListener('load', () => {
     if (!window.AUTH0_CONFIG) {
@@ -395,3 +422,60 @@ function showError(message) {
     `;
     document.body.insertBefore(errorDiv, document.body.firstChild);
 }
+
+// Handle chat form submission
+document.getElementById('chat-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = document.getElementById('chat-input');
+    const message = input.value.trim();
+    if (!message) return;
+
+    // Clear input
+    input.value = '';
+
+    // Add user message to chat
+    addMessage('user', message);
+
+    try {
+        // Show typing indicator
+        const typingIndicator = document.createElement('div');
+        typingIndicator.className = 'typing-indicator';
+        typingIndicator.textContent = 'AI is typing...';
+        document.getElementById('chat-messages').appendChild(typingIndicator);
+
+        // Make API call
+        const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${accessToken}`
+            },
+            body: JSON.stringify({
+                messages: [{
+                    role: 'user',
+                    content: message
+                }]
+            })
+        });
+
+        // Remove typing indicator
+        typingIndicator.remove();
+
+        if (!response.ok) {
+            throw new Error('Failed to get AI response');
+        }
+
+        const data = await response.json();
+        if (data.content) {
+            // Try to handle as JSON response first
+            const success = await handleAIResponse(data.content);
+            if (!success) {
+                // If not a valid JSON response, display as regular message
+                addMessage('assistant', data.content);
+            }
+        }
+    } catch (err) {
+        console.error('Chat error:', err);
+        addMessage('assistant', 'Sorry, I encountered an error. Please try again.');
+    }
+});

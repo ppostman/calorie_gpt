@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -78,6 +79,24 @@ type OAuth2Config struct {
 	AuthURL      string
 	TokenURL     string
 	Scopes       []string
+}
+
+type PushSubscription struct {
+	gorm.Model
+	UserID      string `json:"user_id" gorm:"index;not null"`
+	Endpoint    string `json:"endpoint" gorm:"not null"`
+	P256dh     string `json:"p256dh" gorm:"not null"`
+	Auth       string `json:"auth" gorm:"not null"`
+}
+
+type ChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type ChatRequest struct {
+	Messages []ChatMessage `json:"messages"`
+	Stream   bool         `json:"stream"`
 }
 
 var (
@@ -530,11 +549,11 @@ func deleteWeight(c *gin.Context) {
 
 type JWTKeys struct {
 	Keys []struct {
-		Kty string `json:"kty"`
-		Kid string `json:"kid"`
-		Use string `json:"use"`
-		N   string `json:"n"`
-		E   string `json:"e"`
+		Kty string   `json:"kty"`
+		Kid string   `json:"kid"`
+		Use string   `json:"use"`
+		N   string   `json:"n"`
+		E   string   `json:"e"`
 	} `json:"keys"`
 }
 
@@ -572,46 +591,90 @@ func getPublicKey(token *jwt.Token) (*rsa.PublicKey, error) {
 	defer jwksCacheMu.Unlock()
 
 	for _, key := range jwks.Keys {
-		if key.Kid == token.Header["kid"].(string) {
-			// Decode the modulus and exponent
-			nBytes, err := base64.RawURLEncoding.DecodeString(key.N)
-			if err != nil {
-				return nil, err
-			}
-			eBytes, err := base64.RawURLEncoding.DecodeString(key.E)
-			if err != nil {
-				return nil, err
-			}
-
-			// Convert the modulus bytes to a big integer
-			n := new(big.Int)
-			n.SetBytes(nBytes)
-
-			// Convert the exponent bytes to an integer
-			var eInt int
-			for i := 0; i < len(eBytes); i++ {
-				eInt = eInt<<8 + int(eBytes[i])
-			}
-
-			// Create the public key
-			publicKey := &rsa.PublicKey{
-				N: n,
-				E: eInt,
-			}
-
-			// Cache the public key
-			jwksCache[key.Kid] = publicKey
-			jwksCacheTime = time.Now()
-
-			return publicKey, nil
+		if key.Kty != "RSA" || key.Use != "sig" {
+			continue
 		}
+
+		// Decode the public key components
+		nBytes, err := base64.RawURLEncoding.DecodeString(key.N)
+		if err != nil {
+			log.Printf("[JWKS] Failed to decode key modulus: %v", err)
+			continue
+		}
+
+		eBytes, err := base64.RawURLEncoding.DecodeString(key.E)
+		if err != nil {
+			log.Printf("[JWKS] Failed to decode key exponent: %v", err)
+			continue
+		}
+
+		// Convert exponent bytes to int
+		var eInt int
+		for i := 0; i < len(eBytes); i++ {
+			eInt = eInt<<8 + int(eBytes[i])
+		}
+
+		// Create RSA public key
+		publicKey := &rsa.PublicKey{
+			N: new(big.Int).SetBytes(nBytes),
+			E: eInt,
+		}
+
+		// Cache the public key
+		jwksCache[key.Kid] = publicKey
+		jwksCacheTime = time.Now()
+
+		return publicKey, nil
 	}
 
-	return nil, fmt.Errorf("unable to find appropriate key")
+	return nil, fmt.Errorf("no valid RSA keys found in JWKS")
 }
 
 func authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Skip authentication for localhost development
+		if strings.HasPrefix(c.Request.Host, "localhost") {
+			// Set a default test user for local development
+			testSub := "test-user-123"
+			testClaims := jwt.MapClaims{
+				"sub": testSub,
+				"email": "test@example.com",
+				"name": "Test User",
+				"picture": "",
+			}
+			
+			// Find or create test user
+			var user User
+			result := db.Where("sub = ?", testSub).First(&user)
+			if result.Error != nil {
+				if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+					user = User{
+						Sub:     testSub,
+						Email:   "test@example.com",
+						Name:    "Test User",
+						Picture: "",
+					}
+					if err := db.Create(&user).Error; err != nil {
+						log.Printf("[Auth] Failed to create test user: %v", err)
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create test user"})
+						c.Abort()
+						return
+					}
+					log.Printf("[Auth] Created new test user with sub: %s", testSub)
+				} else {
+					log.Printf("[Auth] Database error: %v", result.Error)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+					c.Abort()
+					return
+				}
+			}
+
+			c.Set("userID", testSub)
+			c.Set("user", testClaims)
+			c.Next()
+			return
+		}
+
 		// Get token from Authorization header
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -807,7 +870,7 @@ func initDB() {
 	}
 
 	// Auto migrate tables (this will create tables if they don't exist)
-	err = db.AutoMigrate(&NutritionEntry{}, &DailyCalorieLimit{}, &Weight{}, &User{})
+	err = db.AutoMigrate(&NutritionEntry{}, &DailyCalorieLimit{}, &Weight{}, &User{}, &PushSubscription{})
 	if err != nil {
 		log.Fatal("Failed to migrate database tables:", err)
 	}
@@ -843,13 +906,13 @@ func fetchJWKS() error {
 		}
 
 		// Decode the public key components
-		n, err := base64.RawURLEncoding.DecodeString(key.N)
+		nBytes, err := base64.RawURLEncoding.DecodeString(key.N)
 		if err != nil {
 			log.Printf("[JWKS] Failed to decode key modulus: %v", err)
 			continue
 		}
 
-		e, err := base64.RawURLEncoding.DecodeString(key.E)
+		eBytes, err := base64.RawURLEncoding.DecodeString(key.E)
 		if err != nil {
 			log.Printf("[JWKS] Failed to decode key exponent: %v", err)
 			continue
@@ -857,13 +920,13 @@ func fetchJWKS() error {
 
 		// Convert exponent bytes to int
 		var eInt int
-		for i := 0; i < len(e); i++ {
-			eInt = eInt<<8 + int(e[i])
+		for i := 0; i < len(eBytes); i++ {
+			eInt = eInt<<8 + int(eBytes[i])
 		}
 
 		// Create RSA public key
 		publicKey := &rsa.PublicKey{
-			N: new(big.Int).SetBytes(n),
+			N: new(big.Int).SetBytes(nBytes),
 			E: eInt,
 		}
 
@@ -1286,71 +1349,186 @@ func handleTokenExchange(c *gin.Context) {
 	c.Data(http.StatusOK, "application/json", rawBody)
 }
 
-func main() {
-	err := godotenv.Load()
+func handlePushSubscribe(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	var subscription PushSubscription
+	if err := c.ShouldBindJSON(&subscription); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	subscription.UserID = userID
+	if err := db.Create(&subscription).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save subscription"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Successfully subscribed to push notifications"})
+}
+
+func handlePushUnsubscribe(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	var subscription PushSubscription
+	if err := c.ShouldBindJSON(&subscription); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := db.Where("user_id = ? AND endpoint = ?", userID, subscription.Endpoint).Delete(&PushSubscription{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unsubscribe"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Successfully unsubscribed from push notifications"})
+}
+
+func handleChat(c *gin.Context) {
+	log.Printf("[Chat] Starting chat request handling")
+	var req ChatRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("[Chat] Error binding JSON request: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return
+	}
+
+	log.Printf("[Chat] Received chat request with %d messages", len(req.Messages))
+
+	// Create request to Langbase API
+	langbaseURL := os.Getenv("LANGBASE_BASEURL")
+	langbaseAPIKey := os.Getenv("LANGBASE_API_KEY")
+
+	if langbaseURL == "" {
+		log.Printf("[Chat] Error: LANGBASE_BASEURL environment variable is not set")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Langbase URL not configured"})
+		return
+	}
+
+	if langbaseAPIKey == "" {
+		log.Printf("[Chat] Error: LANGBASE_API_KEY environment variable is not set")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Langbase API key not configured"})
+		return
+	}
+
+	log.Printf("[Chat] Using Langbase URL: %s", langbaseURL)
+	
+	// Log request body for debugging
+	requestBody, err := json.Marshal(req)
 	if err != nil {
-		log.Fatal("Error loading .env file")
+		log.Printf("[Chat] Error marshaling request body: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare request"})
+		return
+	}
+	log.Printf("[Chat] Request body: %s", string(requestBody))
+
+	client := &http.Client{}
+	langbaseReq, err := http.NewRequest("POST", langbaseURL, bytes.NewBuffer(requestBody))
+	if err != nil {
+		log.Printf("[Chat] Error creating request: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request"})
+		return
 	}
 
-	initOAuth2Config()
+	langbaseReq.Header.Set("Content-Type", "application/json")
+	langbaseReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", langbaseAPIKey))
+	log.Printf("[Chat] Request headers set: Content-Type and Authorization")
+
+	// Make request to Langbase
+	log.Printf("[Chat] Sending request to Langbase")
+	resp, err := client.Do(langbaseReq)
+	if err != nil {
+		log.Printf("[Chat] Error making request to Langbase: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to make request to AI service: %v", err)})
+		return
+	}
+	defer resp.Body.Close()
+	
+	// Log response status and headers
+	log.Printf("[Chat] Langbase response status: %s", resp.Status)
+	log.Printf("[Chat] Langbase response headers: %v", resp.Header)
+
+	// If response is not 200, read and log error body
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("[Chat] Error reading error response body: %v", err)
+		} else {
+			log.Printf("[Chat] Error response from Langbase: %s", string(body))
+		}
+		c.JSON(resp.StatusCode, gin.H{"error": fmt.Sprintf("AI service returned error: %s", resp.Status)})
+		return
+	}
+
+	// Set headers for streaming response
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	log.Printf("[Chat] Set response headers for streaming")
+
+	// Stream the response back to the client
+	log.Printf("[Chat] Starting to stream response")
+	written, err := io.Copy(c.Writer, resp.Body)
+	if err != nil {
+		log.Printf("[Chat] Error streaming response: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to stream response"})
+		return
+	}
+	log.Printf("[Chat] Successfully streamed %d bytes", written)
+}
+
+func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Error loading .env file: %v", err)
+	}
+
 	initDB()
+	initOAuth2Config()
 
-	r := gin.New()
-	r.Use(gin.Recovery())
-	r.Use(requestLogger())
+	r := gin.Default()
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Authorization", "Content-Type"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
 
-	// Configure CORS
-	config := cors.DefaultConfig()
-	// Allow requests from both localhost and your GPT integration
-	config.AllowOrigins = []string{
-		"http://localhost:8080",
-		"https://chat.openai.com",
-		"https://chat.openai.com/",
-		"https://chatgpt.com",
-		"https://chatgpt.com/",
-		"https://calorie-gpt.onrender.com",
-		"https://calorie-gpt.onrender.com/",
-	}
-	config.AllowCredentials = true
-	config.AllowHeaders = []string{
-		"Origin",
-		"Content-Type",
-		"Accept",
-		"Authorization",
-		"Cookie",
-		"Set-Cookie",
-	}
-	config.ExposeHeaders = []string{
-		"Content-Length",
-		"Authorization",
-		"Set-Cookie",
-	}
-	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
-	r.Use(cors.New(config))
-
-	// OAuth2 endpoints
-	oauth := r.Group("/oauth2")
-	{
-		oauth.GET("/authorize", handleOAuth2Authorize)
-		oauth.GET("/callback", handleOAuth2Callback)
-		oauth.POST("/token", handleTokenExchange)
-		oauth.GET("/userinfo", handleUserInfo)
-	}
-
-	// Static files
-	r.Static("/static", "./static")
-	r.StaticFile("/", "./static/index.html")
-	r.StaticFile("/auth0-config.js", "./static/auth0-config.js")
-	r.StaticFile("/app.js", "./static/app.js")
-	r.StaticFile("/privacy-policy.html", "./static/privacy-policy.html")
-
-	// Auth0 callback handler
-	r.GET("/callback", func(c *gin.Context) {
-		c.HTML(http.StatusOK, "index.html", nil)
+	// Add cache control middleware for static files
+	r.Use(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/static/") {
+			c.Header("Cache-Control", "public, max-age=31536000")
+		}
+		c.Next()
 	})
 
-	// Protected API routes
-	api := r.Group("/")
+	// Serve static files with proper headers
+	r.Static("/static", "./static")
+
+	// Serve service worker at root
+	r.GET("/sw.js", func(c *gin.Context) {
+		c.Header("Service-Worker-Allowed", "/")
+		c.Header("Cache-Control", "no-cache")
+		c.File("./static/sw.js")
+	})
+
+	// Serve manifest.json
+	r.GET("/manifest.json", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache")
+		c.File("./static/manifest.json")
+	})
+
+	// API routes
+	api := r.Group("/api")
 	api.Use(authMiddleware())
 	{
 		api.POST("/daily-limit", createDailyLimit)
@@ -1368,10 +1546,19 @@ func main() {
 		api.GET("/weight/date/:date", getWeightsByDate)
 		api.PUT("/weight/:id", updateWeight)
 		api.DELETE("/weight/:id", deleteWeight)
+
+		// Push notification endpoints
+		api.POST("/push/subscribe", handlePushSubscribe)
+		api.DELETE("/push/unsubscribe", handlePushUnsubscribe)
+
+		// Chat endpoint
+		api.POST("/chat", handleChat)
 	}
 
-	r.GET("/privacy", func(c *gin.Context) {
-		c.File("./static/privacy-policy.html")
+	// Serve index.html for all other routes (SPA support)
+	r.NoRoute(func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache")
+		c.File("./static/index.html")
 	})
 
 	port := os.Getenv("PORT")
