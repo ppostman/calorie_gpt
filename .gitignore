@@ -1,0 +1,10 @@
+# Ignore environment and sensitive files
+.env
+*.env
+# Ignore OS and editor files
+.DS_Store
+*.swp
+*.swo
+*.idea/
+.vscode/
+node_modules/
